@@ -28,7 +28,7 @@ final class GameTapPolicy {
         // centered on the game. Only close its own X; never click the green
         // video/"使用" button.
         if ("FRUIT_TOOL_MODAL_CLOSE".equals(reason))
-            return nx >= .76 && nx <= .87 && ny >= .17 && ny <= .26;
+            return nx >= .82 && nx <= .90 && ny >= .245 && ny <= .32;
         if ("FRUIT_UI_CONTINUE".equals(reason)
                 || "FRUIT_UI_REVIVE".equals(reason))
             return nx >= .15 && nx <= .85 && ny >= .35 && ny <= .92;
