@@ -533,7 +533,7 @@ public final class TaskExecutor {
         lastCategoryExhaustedV438 = false;
         TaskCategory requested = activeCategory;
         TaskCategory[] categories = requested == TaskCategory.ALL
-                ? new TaskCategory[]{TaskCategory.LOCAL, TaskCategory.VIDEO, TaskCategory.GAME, TaskCategory.JUMP}
+                ? new TaskCategory[]{TaskCategory.LOCAL, TaskCategory.VIDEO, TaskCategory.JUMP}
                 : new TaskCategory[]{requested};
         for (int i = 0; i < categories.length; i++) {
             if (userAborted || gameIncompleteHoldV421) break;
@@ -1732,7 +1732,7 @@ public final class TaskExecutor {
         switch (category) {
             case LOCAL: return AppConfig.isLocalTaskEnabled(context);
             case VIDEO: return AppConfig.isVideoTaskEnabled(context);
-            case GAME: return AppConfig.isGameTaskEnabled(context);
+            case GAME: return false;
             case JUMP: return AppConfig.isJumpTaskEnabled(context);
             default: return false;
         }
