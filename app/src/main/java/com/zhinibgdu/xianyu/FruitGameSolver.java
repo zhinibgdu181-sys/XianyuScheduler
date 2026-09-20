@@ -160,7 +160,7 @@ public final class FruitGameSolver {
             FruitPlanner.Plan plan = FruitPlanner.plan(current);
             host.log(String.format(
                     Locale.US,
-                    "[水果搜索] R=%d T=%d 候选=%d score=%.3f reason=%s",
+                    "[水果搜索] R=%d T=%d 路线点击=%d score=%.3f reason=%s",
                     current.boardFruits.size(),
                     current.trayCount(),
                     plan.clicks.size(),
@@ -186,71 +186,104 @@ public final class FruitGameSolver {
                 continue;
             }
 
-            FruitPlanner.Click click = plan.clicks.get(0);
-            if (!GameTapPolicy.allows(
-                    click.x, click.y, current.width, current.height, click.reason
-            )) {
-                host.log("[水果新求解器] GameTapPolicy 拒绝候选：" + click.x + "," + click.y);
-                if (++noProgress >= MAX_NO_PROGRESS) return Result.SAFE_STOP_DIRTY;
-                continue;
-            }
+            /*
+             * A plan now contains multiple complete pairs. We execute one pair,
+             * verify the resulting frame, then continue with the already-searched
+             * route only if the board transition is consistent. This removes the
+             * expensive search between every pair without blindly replaying stale
+             * coordinates.
+             */
+            boolean routeBroken = false;
+            for (int routeIndex = 0;
+                    routeIndex < plan.clicks.size();
+                    routeIndex++) {
 
-            host.log("[水果执行] tap " + click.reason + " @" + click.x + "," + click.y);
-            if (!host.tap(click.x, click.y, click.reason)) {
-                host.log("[水果执行] 点击失败，立即重新规划");
-                if (++noProgress >= MAX_NO_PROGRESS) return Result.SAFE_STOP_DIRTY;
-                continue;
-            }
-
-            // A successful tap must earn a new observation. Do not sleep for a
-            // fixed 15s or reuse the previous board as proof of success.
-            if (!host.sleep(90L, 170L)) return Result.ABORTED;
-
-            Bitmap afterFrame = ScreenOcr.captureBitmap(
-                    context,
-                    suPath,
-                    () -> host.aborted()
-            );
-            if (afterFrame == null) {
-                host.log("[水果验证] 点击后截图失败，下一轮立即重建状态");
-                if (++noProgress >= MAX_NO_PROGRESS) return Result.SAFE_STOP_DIRTY;
-                continue;
-            }
-
-            FruitBoardState after;
-            try {
-                after = FruitVisionEngine.observe(afterFrame);
-                if (after.width > 0 && after.height > 0) host.onFrameSize(after.width, after.height);
-            } finally {
-                if (!afterFrame.isRecycled()) afterFrame.recycle();
-            }
-
-            int beforeCount = current.boardFruits.size();
-            int afterCount = after.boardFruits.size();
-            if (afterCount < beforeCount) {
-                host.log("[水果验证] 成功：棋盘对象 " + beforeCount + " -> " + afterCount
-                        + "；立即重新规划");
-                noProgress = 0;
-                current = after;
-                continue;
-            }
-
-            int structuralChange = current.fingerprintChangesAgainst(after);
-            if (structuralChange >= 1 && afterCount <= beforeCount + 1) {
-                host.log("[水果验证] 棋盘发生结构变化=" + structuralChange + "，接受并重新规划");
-                noProgress = 0;
-                current = after;
-                continue;
-            }
-
-            host.log("[水果验证] 首击无确认变化，立即废弃本候选并重新识别");
-            noProgress++;
-            replanCount++;
-            if (replanCount % 3 == 0) {
-                ScreenOcr.Snapshot retryProbe = host.ocr("水果连续候选失败确认");
-                if (retryProbe != null && looksLikeFailedRound(retryProbe.fullText)) {
-                    return Result.GAME_FAILED;
+                FruitPlanner.Click click = plan.clicks.get(routeIndex);
+                if (!GameTapPolicy.allows(
+                        click.x,
+                        click.y,
+                        current.width,
+                        current.height,
+                        click.reason
+                )) {
+                    host.log("[水果新求解器] GameTapPolicy 拒绝路线："
+                            + click.x + "," + click.y);
+                    routeBroken = true;
+                    break;
                 }
+
+                host.log("[水果执行] 路线 "
+                        + (routeIndex + 1) + "/" + plan.clicks.size()
+                        + " tap " + click.reason
+                        + " @" + click.x + "," + click.y);
+
+                if (!host.tap(click.x, click.y, click.reason)) {
+                    host.log("[水果执行] 路线点击失败，立即废弃剩余路线");
+                    routeBroken = true;
+                    break;
+                }
+
+                if (click.reason.equals("PAIR_FIRST")) {
+                    if (!host.sleep(130L, 180L)) return Result.ABORTED;
+                    continue;
+                }
+
+                if (!host.sleep(180L, 260L)) return Result.ABORTED;
+
+                // UNLOCK is intentionally a one-click route. It must be
+                // re-observed before another action is allowed.
+                if (click.reason.equals("UNLOCK")) {
+                    routeBroken = true;
+                    break;
+                }
+
+                // PAIR_SECOND completes one predicted transition. Verify once per
+                // pair instead of after every individual fruit click.
+                Bitmap afterFrame = ScreenOcr.captureBitmap(
+                        context,
+                        suPath,
+                        () -> host.aborted()
+                );
+                if (afterFrame == null) {
+                    host.log("[水果验证] 路线截图失败，立即重新识别");
+                    routeBroken = true;
+                    break;
+                }
+
+                FruitBoardState after;
+                try {
+                    after = FruitVisionEngine.observe(afterFrame);
+                    if (after.width > 0 && after.height > 0) {
+                        host.onFrameSize(after.width, after.height);
+                    }
+                } finally {
+                    if (!afterFrame.isRecycled()) afterFrame.recycle();
+                }
+
+                int beforeCount = current.boardFruits.size();
+                int afterCount = after.boardFruits.size();
+                int structuralChange = current.fingerprintChangesAgainst(after);
+
+                if (afterCount < beforeCount || structuralChange >= 1) {
+                    host.log("[水果验证] 路线段成功："
+                            + beforeCount + " -> " + afterCount
+                            + "，结构变化=" + structuralChange);
+                    current = after;
+                    noProgress = 0;
+                    continue;
+                }
+
+                host.log("[水果验证] 路线段未产生可确认变化，"
+                        + "立即废弃剩余路线并重新搜索");
+                routeBroken = true;
+                noProgress++;
+                break;
+            }
+
+            if (!routeBroken && !plan.isEmpty()) {
+                // The complete predicted route was consumed. Re-observe at the
+                // top of the loop for completion/task verification.
+                noProgress = 0;
             }
         }
 
