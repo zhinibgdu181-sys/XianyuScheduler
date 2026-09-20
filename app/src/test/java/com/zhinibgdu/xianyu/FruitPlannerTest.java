@@ -36,7 +36,7 @@ public class FruitPlannerTest {
 
     @Test
     public void fullTrayRejectsUnmatchedExploration() {
-        FruitBoardState tray = new FruitBoardState.Fruit(500, 2050, 465, 2015, 535, 2085,
+        FruitBoardState.Fruit tray = new FruitBoardState.Fruit(500, 2050, 465, 2015, 535, 2085,
                 4900, 70, 220, 70, 120, 0.8f, 0.8f,
                 new float[]{0.0f,0.0f,0.0f,0.0f,0.8f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f});
         FruitBoardState state = new FruitBoardState(
