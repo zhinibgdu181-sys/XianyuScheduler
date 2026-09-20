@@ -34,6 +34,24 @@ public class FruitPlannerTest {
         assertTrue(plan.clicks.get(0).reason.startsWith("PAIR"));
     }
 
+
+    @Test
+    public void repeatedSameFruitDoesNotDeadlockPairing() {
+        FruitBoardState.Fruit a = fruit(200, 700, 240, 70, 70, 0);
+        FruitBoardState.Fruit b = fruit(500, 900, 239, 71, 71, 0);
+        FruitBoardState.Fruit c = fruit(800, 1100, 241, 69, 69, 0);
+
+        FruitBoardState state = new FruitBoardState(
+                1080, 2400,
+                Arrays.asList(a, b, c),
+                null
+        );
+
+        FruitPlanner.Plan plan = FruitPlanner.plan(state);
+        assertFalse(plan.isEmpty());
+        assertTrue(plan.clicks.get(0).reason.startsWith("PAIR"));
+    }
+
     @Test
     public void fullTrayRejectsUnmatchedExploration() {
         FruitBoardState.Fruit tray = new FruitBoardState.Fruit(500, 2050, 465, 2015, 535, 2085,
