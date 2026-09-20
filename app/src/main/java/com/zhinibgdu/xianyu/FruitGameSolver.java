@@ -77,7 +77,7 @@ public final class FruitGameSolver {
      * The solver should re-observe/replan instead of deliberately waiting.
      */
     private static final long MAX_IDLE_BETWEEN_ACTIONS_MS = 2_200L;
-    private static final int MAX_NO_PROGRESS = 2;
+    private static final int MAX_NO_PROGRESS = 8;
 
     private FruitGameSolver() {}
 
@@ -227,7 +227,35 @@ public final class FruitGameSolver {
                     host.log("[水果新求解器] 连续无安全动作，结束本轮并保留现场");
                     return Result.SAFE_STOP_DIRTY;
                 }
-                host.sleep(60L, 100L);
+
+                /*
+                 * The game has a known idle-triggered "消除/使用" popup.
+                 * When planning temporarily has no safe fruit action, do not
+                 * leave the screen untouched. Tap a dynamically selected blank
+                 * board position. The point is chosen outside every detected
+                 * fruit bounding box and away from the bottom controls.
+                 *
+                 * This is a keep-alive only: it is never treated as a fruit
+                 * action and the next loop still captures a fresh frame.
+                 */
+                int[] keepAlive = findBlankKeepAlivePoint(current);
+                if (keepAlive != null
+                        && GameTapPolicy.allows(
+                        keepAlive[0], keepAlive[1],
+                        current.width, current.height,
+                        "IDLE_KEEPALIVE")) {
+                    if (host.tap(
+                            keepAlive[0], keepAlive[1],
+                            "IDLE_KEEPALIVE")) {
+                        lastActionAt = System.currentTimeMillis();
+                        host.log("[水果防空闲] 无安全配对，点击空白区域保持游戏活跃 @"
+                                + keepAlive[0] + "," + keepAlive[1]);
+                    }
+                } else {
+                    host.log("[水果防空闲] 未找到可靠空白区域，仅重新识别");
+                }
+
+                host.sleep(500L, 700L);
                 continue;
             }
 
@@ -343,6 +371,52 @@ public final class FruitGameSolver {
         if (host.aborted()) return Result.ABORTED;
         host.log("[水果新求解器] 达到本轮最大运行时间，安全停止并保留当前页面");
         return Result.SAFE_STOP_DIRTY;
+    }
+
+    /** Find the board point farthest from all currently detected fruit rectangles. */
+    private static int[] findBlankKeepAlivePoint(FruitBoardState state) {
+        if (state == null || state.width <= 0 || state.height <= 0) return null;
+
+        int bestX = -1;
+        int bestY = -1;
+        double bestClearance = -1.0;
+
+        // Keep well inside the blue playfield and outside the lower game controls.
+        int left = Math.round(state.width * 0.10f);
+        int right = Math.round(state.width * 0.90f);
+        int top = Math.round(state.height * 0.22f);
+        int bottom = Math.round(state.height * 0.72f);
+
+        for (int gy = 0; gy < 7; gy++) {
+            int y = top + Math.round((bottom - top) * gy / 6.0f);
+            for (int gx = 0; gx < 9; gx++) {
+                int x = left + Math.round((right - left) * gx / 8.0f);
+                double clearance = Double.MAX_VALUE;
+
+                for (FruitBoardState.Fruit fruit : state.boardFruits) {
+                    double dx = 0.0;
+                    if (x < fruit.left) dx = fruit.left - x;
+                    else if (x > fruit.right) dx = x - fruit.right;
+                    double dy = 0.0;
+                    if (y < fruit.top) dy = fruit.top - y;
+                    else if (y > fruit.bottom) dy = y - fruit.bottom;
+                    double distance = Math.hypot(dx, dy);
+                    clearance = Math.min(clearance, distance);
+                }
+
+                if (state.boardFruits.isEmpty()) clearance = 9999.0;
+                if (clearance > bestClearance) {
+                    bestClearance = clearance;
+                    bestX = x;
+                    bestY = y;
+                }
+            }
+        }
+
+        // Require a genuinely empty patch. Never turn a keep-alive into a blind
+        // fruit click merely because the board is crowded.
+        if (bestX < 0 || bestClearance < 32.0) return null;
+        return new int[]{bestX, bestY};
     }
 
     public static boolean looksLikeFruitGame(String text) {
