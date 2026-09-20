@@ -687,7 +687,10 @@ final class FruitPlanner {
             if (clicks.isEmpty()) return "";
             if (clicks.size() == 1) {
                 Click c = clicks.get(0);
-                return "S:" + quantize(c.x) + ":" + quantize(c.y) + ":" + c.reason;
+                // Blacklist by position, not by reason. A failed normal tray
+                // match must not be retried immediately as DEADLOCK_TRAY_MATCH
+                // on the same fruit.
+                return "S:" + quantize(c.x) + ":" + quantize(c.y);
             }
             Click a = clicks.get(0);
             Click b = clicks.get(1);
