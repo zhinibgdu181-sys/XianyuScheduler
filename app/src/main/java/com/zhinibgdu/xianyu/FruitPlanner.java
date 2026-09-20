@@ -76,23 +76,35 @@ final class FruitPlanner {
     }
 
     static Plan plan(FruitBoardState state) {
+        return plan(state, java.util.Collections.emptySet());
+    }
+
+    static Plan plan(FruitBoardState state, Set<String> blockedRootActions) {
         if (state == null || state.boardFruits.isEmpty()) return Plan.empty();
+        Set<String> blocked = blockedRootActions == null
+                ? java.util.Collections.emptySet()
+                : blockedRootActions;
 
         Click trayMatch = bestTrayMatch(state);
         if (trayMatch != null) {
             List<Click> clicks = new ArrayList<>(1);
             clicks.add(trayMatch);
-            return new Plan(
+            Plan trayPlan = new Plan(
                     clicks,
                     50.0,
                     "槽内已有水果，优先单击同类可落水果"
             );
+            if (!blocked.contains(trayPlan.actionKey())) {
+                return trayPlan;
+            }
         }
 
         List<Move> rootMoves = generateMoves(state);
+        rootMoves.removeIf(move -> blocked.contains(move.actionKey()));
         boolean rescue = false;
         if (rootMoves.isEmpty()) {
             rootMoves = generateNearestNeighborRescueMoves(state);
+            rootMoves.removeIf(move -> blocked.contains(move.actionKey()));
             rescue = !rootMoves.isEmpty();
         }
 
@@ -587,6 +599,19 @@ final class FruitPlanner {
         boolean isEmpty() {
             return clicks.isEmpty();
         }
+
+        String actionKey() {
+            if (clicks.isEmpty()) return "";
+            if (clicks.size() == 1) {
+                Click c = clicks.get(0);
+                return "S:" + quantize(c.x) + ":" + quantize(c.y) + ":" + c.reason;
+            }
+            Click a = clicks.get(0);
+            Click b = clicks.get(1);
+            return "P:"
+                    + quantize(a.x) + ":" + quantize(a.y)
+                    + ":" + quantize(b.x) + ":" + quantize(b.y);
+        }
     }
 
     static final class Click {
@@ -627,6 +652,16 @@ final class FruitPlanner {
             this.by = by;
             this.score = score;
         }
+
+        String actionKey() {
+            return "P:"
+                    + quantize(ax) + ":" + quantize(ay)
+                    + ":" + quantize(bx) + ":" + quantize(by);
+        }
+    }
+
+    private static int quantize(int value) {
+        return Math.round(value / 24.0f);
     }
 
     private static final class SearchResult {
