@@ -160,4 +160,28 @@ public class FruitPlannerTest {
         ));
     }
 
+
+    @Test
+    public void matchingPairIsStillPlayableWithSeveralFruitsBelowIt() {
+        FruitBoardState.Fruit redA = fruit(300, 420, 240, 70, 70, 0);
+        FruitBoardState.Fruit redB = fruit(720, 460, 239, 71, 71, 1);
+
+        FruitBoardState state = new FruitBoardState(
+                1080, 2400,
+                Arrays.asList(
+                        redA,
+                        redB,
+                        fruit(300, 720, 50, 90, 230, 220),
+                        fruit(300, 980, 70, 180, 80, 120),
+                        fruit(720, 760, 50, 90, 230, 220),
+                        fruit(720, 1020, 70, 180, 80, 120)
+                ),
+                null
+        );
+
+        FruitPlanner.Plan plan = FruitPlanner.plan(state);
+        assertFalse(plan.isEmpty());
+        assertTrue(plan.clicks.get(0).reason.startsWith("PAIR"));
+    }
+
 }
