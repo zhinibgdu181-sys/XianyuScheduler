@@ -20,6 +20,9 @@ final class FruitPlanner {
     private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.18;
     private static final double PAIR_AMBIGUITY_MARGIN = 0.012;
     private static final double PAIR_RESCUE_MAX_DISTANCE = 0.50;
+    private static final double TRAY_MATCH_MAX_DISTANCE = 0.34;
+    private static final double MIN_DROP_SCORE = 0.44;
+    private static final int MAX_DOWNWARD_BLOCKERS = 1;
     private static final int MAX_SEARCH_DEPTH = 14;
     private static final long SEARCH_BUDGET_MS = 280L;
 
@@ -34,9 +37,14 @@ final class FruitPlanner {
         double minNearest = Double.MAX_VALUE;
         double sumNearest = 0.0;
         int nearestSamples = 0;
+        int safeDrop = 0;
 
         for (int i = 0; i < state.boardFruits.size(); i++) {
             FruitBoardState.Fruit a = state.boardFruits.get(i);
+            if (clickability(state, a) >= MIN_DROP_SCORE
+                    && downwardBlockers(state, a) <= MAX_DOWNWARD_BLOCKERS) {
+                safeDrop++;
+            }
             double nearest = Double.MAX_VALUE;
             for (int j = 0; j < state.boardFruits.size(); j++) {
                 if (i == j) continue;
@@ -62,12 +70,24 @@ final class FruitPlanner {
                 + " tray=" + state.trayCount()
                 + " normalPairs=" + normal
                 + " rescuePairs=" + rescue
+                + " safeDrop=" + safeDrop
                 + " minNearest=" + minText
                 + " avgNearest=" + avgText;
     }
 
     static Plan plan(FruitBoardState state) {
         if (state == null || state.boardFruits.isEmpty()) return Plan.empty();
+
+        Click trayMatch = bestTrayMatch(state);
+        if (trayMatch != null) {
+            List<Click> clicks = new ArrayList<>(1);
+            clicks.add(trayMatch);
+            return new Plan(
+                    clicks,
+                    50.0,
+                    "槽内已有水果，优先单击同类可落水果"
+            );
+        }
 
         List<Move> rootMoves = generateMoves(state);
         boolean rescue = false;
@@ -228,9 +248,18 @@ final class FruitPlanner {
         for (int i = 0; i < n; i++) {
             FruitBoardState.Fruit a = state.boardFruits.get(i);
             double accessA = clickability(state, a);
+            int belowA = downwardBlockers(state, a);
+            if (accessA < MIN_DROP_SCORE || belowA > MAX_DOWNWARD_BLOCKERS) {
+                continue;
+            }
 
             for (int j = i + 1; j < n; j++) {
                 FruitBoardState.Fruit b = state.boardFruits.get(j);
+                double accessB = clickability(state, b);
+                int belowB = downwardBlockers(state, b);
+                if (accessB < MIN_DROP_SCORE || belowB > MAX_DOWNWARD_BLOCKERS) {
+                    continue;
+                }
                 double similarity = distance[i][j];
                 if (similarity > PAIR_MAX_DISTANCE) continue;
 
@@ -254,15 +283,22 @@ final class FruitPlanner {
                 boolean trayMatch = matchesTray(state, a) || matchesTray(state, b);
 
                 double score = similarityScore(similarity)
-                        + 0.24 * (accessA + clickability(state, b))
+                        + 0.42 * (accessA + accessB)
                         + (trayMatch ? 0.10 : 0.0)
                         + (reciprocal ? 0.10 : 0.0)
-                        + 0.20 * Math.min(1.0, (aMargin + bMargin) / 0.12);
+                        + 0.20 * Math.min(1.0, (aMargin + bMargin) / 0.12)
+                        - 0.12 * (belowA + belowB);
 
+                // Lower fruit first. If two matching fruits are vertically
+                // related, clearing the lower one is more likely to open the
+                // upper fruit's fall corridor before the second tap.
+                boolean bFirst = b.centerY > a.centerY;
                 result.add(new Move(
                         i, j,
-                        a.centerX, a.centerY,
-                        b.centerX, b.centerY,
+                        bFirst ? b.centerX : a.centerX,
+                        bFirst ? b.centerY : a.centerY,
+                        bFirst ? a.centerX : b.centerX,
+                        bFirst ? a.centerY : b.centerY,
                         score
                 ));
             }
@@ -319,15 +355,25 @@ final class FruitPlanner {
 
             FruitBoardState.Fruit fa = state.boardFruits.get(a);
             FruitBoardState.Fruit fb = state.boardFruits.get(b);
+            double accessA = clickability(state, fa);
+            double accessB = clickability(state, fb);
+            int belowA = downwardBlockers(state, fa);
+            int belowB = downwardBlockers(state, fb);
+            if (accessA < 0.30 || accessB < 0.30 || belowA > 2 || belowB > 2) {
+                continue;
+            }
             double d = fa.similarityDistance(fb);
-            double access = 0.24 * (clickability(state, fa) + clickability(state, fb));
+            double access = 0.24 * (accessA + accessB);
             double score = Math.max(0.0, 1.0 - d / PAIR_RESCUE_MAX_DISTANCE)
                     + access
                     + (bestIndex[j] == i ? 0.20 : 0.0);
+            boolean bFirst = fb.centerY > fa.centerY;
             Move move = new Move(
                     a, b,
-                    fa.centerX, fa.centerY,
-                    fb.centerX, fb.centerY,
+                    bFirst ? fb.centerX : fa.centerX,
+                    bFirst ? fb.centerY : fa.centerY,
+                    bFirst ? fa.centerX : fb.centerX,
+                    bFirst ? fa.centerY : fb.centerY,
                     score
             );
             if (bestIndex[j] == i) reciprocal.add(move);
@@ -411,25 +457,98 @@ final class FruitPlanner {
             FruitBoardState state,
             FruitBoardState.Fruit target
     ) {
-        int blockers = overlapCount(state, target);
+        int overlaps = overlapCount(state, target);
+        int below = downwardBlockers(state, target);
+
         double centerBias = 1.0 - Math.min(
                 1.0,
                 Math.abs(target.centerX - state.width / 2.0)
                         / Math.max(1.0, state.width / 2.0)
         );
-        double topBias = 1.0 - Math.min(
-                1.0,
-                Math.max(0, target.centerY - state.height * 0.22)
-                        / Math.max(1.0, state.height * 0.62)
+
+        // In this game a clicked fruit must fall toward the roofs/collector.
+        // The previous "topBias" rewarded high fruits, which is the opposite of
+        // the real physics. Fruits already near the lower board are safer.
+        double lowerBias = Math.max(
+                0.0,
+                Math.min(
+                        1.0,
+                        (target.centerY - state.height * 0.10)
+                                / Math.max(1.0, state.height * 0.50)
+                )
         );
 
         return Math.max(
                 0.0,
-                0.58
-                        + 0.18 * centerBias
-                        + 0.24 * topBias
-                        - Math.min(0.65, blockers * 0.28)
+                Math.min(
+                        1.0,
+                        0.34
+                                + 0.36 * lowerBias
+                                + 0.12 * centerBias
+                                - Math.min(0.36, overlaps * 0.18)
+                                - Math.min(0.54, below * 0.22)
+                )
         );
+    }
+
+    private static int downwardBlockers(
+            FruitBoardState state,
+            FruitBoardState.Fruit target
+    ) {
+        int blockers = 0;
+        double targetRadius = Math.max(18.0,
+                Math.min(target.width(), target.height()) * 0.46);
+
+        for (FruitBoardState.Fruit other : state.boardFruits) {
+            if (other == target) continue;
+            if (other.centerY <= target.centerY + targetRadius * 0.35) continue;
+
+            double otherRadius = Math.max(18.0,
+                    Math.min(other.width(), other.height()) * 0.46);
+            double corridor = targetRadius + otherRadius * 0.72;
+            if (Math.abs(other.centerX - target.centerX) > corridor) continue;
+
+            // Objects far below still matter, but nearby objects are the ones
+            // most likely to physically stop the falling fruit.
+            double dy = other.centerY - target.centerY;
+            if (dy <= state.height * 0.34) {
+                blockers++;
+            }
+        }
+        return blockers;
+    }
+
+    private static Click bestTrayMatch(FruitBoardState state) {
+        if (state.trayFruits.isEmpty()) return null;
+
+        FruitBoardState.Fruit bestFruit = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+
+        for (FruitBoardState.Fruit board : state.boardFruits) {
+            double drop = clickability(state, board);
+            int below = downwardBlockers(state, board);
+            if (drop < MIN_DROP_SCORE || below > MAX_DOWNWARD_BLOCKERS) continue;
+
+            double identity = Double.MAX_VALUE;
+            for (FruitBoardState.Fruit tray : state.trayFruits) {
+                identity = Math.min(identity, board.similarityDistance(tray));
+            }
+            if (identity > TRAY_MATCH_MAX_DISTANCE) continue;
+
+            double score = 4.0 * Math.max(
+                    0.0,
+                    1.0 - identity / TRAY_MATCH_MAX_DISTANCE
+            ) + 2.0 * drop - 0.30 * below;
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestFruit = board;
+            }
+        }
+
+        return bestFruit == null
+                ? null
+                : new Click(bestFruit.centerX, bestFruit.centerY, "TRAY_MATCH");
     }
 
     private static boolean contains(
