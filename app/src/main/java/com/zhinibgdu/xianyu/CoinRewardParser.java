@@ -15,7 +15,7 @@ final class CoinRewardParser {
             "(?:闲鱼币|鱼币)\\s*[xX×+：:]?\\s*(\\d{1,6})"
     );
     private static final Pattern SIGNED_REWARD = Pattern.compile(
-            "\\+\\s*(\\d{1,6})(?!\\s*[%/])"
+            "\\+\\s*(\\d{1,6})(?!\\d)(?!\\s*[%/])"
     );
 
     private CoinRewardParser() {
