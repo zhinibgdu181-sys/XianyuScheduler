@@ -5578,8 +5578,8 @@ public final class TaskExecutor {
                             continue;
                         }
                         if (now <= syntheticInputIgnoreUntilV411
-                                && now - lastSyntheticInputAtV411 <= 220L) {
-                            diagnostic("[人工检测V4.11] 忽略与程序输入高度同步的触摸事件，delta="
+                                && now - lastSyntheticInputAtV411 <= 500L) {
+                            diagnostic("[人工检测V4.47.2] 忽略程序 input tap/swipe 的触摸尾事件，delta="
                                     + Math.max(0L, now - lastSyntheticInputAtV411) + "ms");
                             continue;
                         }
@@ -6571,7 +6571,7 @@ public final class TaskExecutor {
             if (c.startsWith("input tap ") || c.startsWith("input swipe ")) {
                 long now = SystemClock.elapsedRealtime();
                 lastSyntheticInputAtV411 = now;
-                syntheticInputIgnoreUntilV411 = now + 180L;
+                syntheticInputIgnoreUntilV411 = now + 500L;
                 invalidateOcrCacheV411();
             } else if (c.startsWith("input keyevent ")
                     || c.startsWith("am start ")
