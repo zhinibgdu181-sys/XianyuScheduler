@@ -1827,18 +1827,26 @@ public final class TaskExecutor {
                 continue;
             }
 
-            // V4.21 hard guard: scanning is only legal on TASK_PANEL. If a game
-            // is still visible, never feed it into generic task-page recovery.
+            // V4.30: TASK_PANEL 识别优先于小游戏关键词。
+            // 任务面板本身会出现“玩游戏/小游戏”等任务文案；不能因为这些
+            // 关键词存在，就把真正的 TASK_PANEL 当成游戏页并提前 SAFE_STOP。
+            // 只有在“明确不是 TASK_PANEL”时，小游戏守卫才有权接管扫描流程。
+            boolean taskPage = isTaskPageV45(null, taskOcr);
             String scanTextV421 = combinedTextV45(null, taskOcr);
-            if (FruitGameSolver.looksLikeFruitGame(scanTextV421)
-                    || FruitGameSolver.looksLikeFruitStartScreen(scanTextV421)
-                    || MahjongGameSolver.looksLikeMahjongPairGame(scanTextV421)) {
-                diagnostic("[游戏守卫V4.29] 扫描阶段仍处于小游戏；停止普通扫描，禁止导航/返回乱操作"
+            boolean looksLikeGameV430 =
+                    FruitGameSolver.looksLikeFruitGame(scanTextV421)
+                            || FruitGameSolver.looksLikeFruitStartScreen(scanTextV421)
+                            || MahjongGameSolver.looksLikeMahjongPairGame(scanTextV421);
+
+            if (!taskPage && looksLikeGameV430) {
+                diagnostic("[游戏守卫V4.30] 已确认不是任务面板且检测到小游戏；停止普通扫描，禁止导航/返回乱操作"
                         + (gameIncompleteHoldV421 ? " / reason=solver_safe_stop" : ""));
                 break;
             }
 
-            boolean taskPage = isTaskPageV45(null, taskOcr);
+            if (taskPage && looksLikeGameV430) {
+                diagnostic("[游戏守卫V4.30] TASK_PANEL 优先：忽略任务文案中的小游戏关键词，继续任务选择");
+            }
 
             if (!taskPage) {
                 // Reuse the same OCR frame to close common reward popups without
