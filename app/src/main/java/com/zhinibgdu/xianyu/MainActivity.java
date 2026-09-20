@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
     private TextView todaySummaryText;
     private TextView todayCompletedText;
     private TextView dataPathText;
-    private Switch localSwitch, videoSwitch, jumpSwitch;
+    private Switch polishSwitch, localSwitch, videoSwitch, jumpSwitch;
     private TextView logText;
     private ScrollView logScroll;
 
@@ -143,14 +143,23 @@ public class MainActivity extends Activity {
         Button log = findViewById(R.id.log_button);
         Button clearLog = findViewById(R.id.clear_log_button);
         Button copyAllLog = findViewById(R.id.copy_all_log_button);
+        polishSwitch = findViewById(R.id.switch_polish_task);
         localSwitch = findViewById(R.id.switch_local_task);
         videoSwitch = findViewById(R.id.switch_video_task);
         jumpSwitch = findViewById(R.id.switch_jump_task);
+        polishSwitch.setChecked(AppConfig.isPolishTaskEnabled(this));
         localSwitch.setChecked(AppConfig.isLocalTaskEnabled(this));
         videoSwitch.setChecked(AppConfig.isVideoTaskEnabled(this));
         jumpSwitch.setChecked(AppConfig.isJumpTaskEnabled(this));
         android.widget.CompoundButton.OnCheckedChangeListener save = (button, checked) ->
-                AppConfig.saveTaskSwitches(this, localSwitch.isChecked(), videoSwitch.isChecked(), jumpSwitch.isChecked());
+                AppConfig.saveTaskSwitches(
+                        this,
+                        polishSwitch.isChecked(),
+                        localSwitch.isChecked(),
+                        videoSwitch.isChecked(),
+                        jumpSwitch.isChecked()
+                );
+        polishSwitch.setOnCheckedChangeListener(save);
         localSwitch.setOnCheckedChangeListener(save);
         videoSwitch.setOnCheckedChangeListener(save);
         jumpSwitch.setOnCheckedChangeListener(save);
@@ -545,18 +554,23 @@ public class MainActivity extends Activity {
 
 
     private void triggerSelectedTasks() {
+        boolean polish = polishSwitch.isChecked();
         boolean local = localSwitch.isChecked();
         boolean video = videoSwitch.isChecked();
         boolean jump = jumpSwitch.isChecked();
 
-        if (!local && !video && !jump) {
+        if (!polish && !local && !video && !jump) {
             setStatusMessage("当前任务开关均已关闭。请至少开启一个任务后再点击“执行任务”。");
             Toast.makeText(this, "请至少开启一个任务", Toast.LENGTH_SHORT).show();
             return;
         }
 
         StringBuilder selected = new StringBuilder();
-        if (local) selected.append("闲鱼本地任务");
+        if (polish) selected.append("一键擦亮");
+        if (local) {
+            if (selected.length() > 0) selected.append("、");
+            selected.append("闲鱼本地任务");
+        }
         if (video) {
             if (selected.length() > 0) selected.append("、");
             selected.append("视频任务");
@@ -568,6 +582,10 @@ public class MainActivity extends Activity {
 
         TaskCategory selectedCategory = null;
         int selectedCount = 0;
+        if (polish) {
+            selectedCategory = TaskCategory.POLISH;
+            selectedCount++;
+        }
         if (local) {
             selectedCategory = TaskCategory.LOCAL;
             selectedCount++;
@@ -582,10 +600,10 @@ public class MainActivity extends Activity {
         }
 
         if (selectedCount == 1 && selectedCategory != null) {
-            setStatusMessage("已选择：" + selected + "。\n执行任务时严格只运行当前分类，不进入其他任务分类。");
+            setStatusMessage("已选择：" + selected + "。\n执行任务时严格只运行当前卡片，不进入其他任务分类。");
             triggerXianyuTask(selectedCategory);
         } else {
-            setStatusMessage("已选择：" + selected + "。\n点击“执行任务”后按已开启分类顺序执行。");
+            setStatusMessage("已选择：" + selected + "。\n点击“执行任务”后按已开启卡片顺序执行。");
             triggerXianyuTask(TaskCategory.ALL);
         }
     }
