@@ -160,6 +160,11 @@ public final class TaskExecutor {
     private static volatile Process touchMonitorProcess;
     private static volatile Thread touchMonitorThread;
 
+    // V4.50: explicit passive human-learning mode. It records only gestures made
+    // while Xianyu is the foreground app and never emits input by itself.
+    private static volatile boolean standaloneHumanLearningV450 = false;
+    private static volatile long standaloneHumanLearningStartedAtV450 = 0L;
+
     // V4.11 manual-takeover hardening: shell-generated tap/swipe events are
     // ignored only inside a very short correlation window so the monitor does
     // not stop itself on devices that echo synthetic input to getevent.
@@ -229,6 +234,73 @@ public final class TaskExecutor {
         return activeCategory.label;
     }
 
+    public static boolean isStandaloneHumanLearningV450() {
+        Thread thread = touchMonitorThread;
+        return standaloneHumanLearningV450
+                && thread != null
+                && thread.isAlive();
+    }
+
+    public static String getHumanLearningSummaryV450(Context context) {
+        if (context == null) return "尚未学习真人操作";
+        return HumanGestureStyleStore.summary(context.getApplicationContext());
+    }
+
+    public static synchronized boolean startStandaloneHumanLearningV450(Context context) {
+        if (context == null || running) return false;
+
+        lastContext = context.getApplicationContext();
+        userAborted = false;
+        physicalTouchDetected = false;
+        physicalTouchAt = 0L;
+        syntheticInputIgnoreUntilV411 = 0L;
+        lastSyntheticInputAtV411 = 0L;
+
+        String suPath = cachedSuPath;
+        if (suPath == null || suPath.isEmpty()) suPath = findSuPathWithRetry();
+        if (suPath == null || suPath.isEmpty()) {
+            standaloneHumanLearningV450 = false;
+            diagnostic("[学习真人V4.50] ROOT 不可用，无法启动触摸学习");
+            return false;
+        }
+
+        cachedSuPath = suPath;
+        standaloneHumanLearningV450 = true;
+        standaloneHumanLearningStartedAtV450 = SystemClock.elapsedRealtime();
+        startPhysicalTouchMonitorV48(suPath);
+
+        if (touchMonitorThread == null || !touchMonitorThread.isAlive()) {
+            standaloneHumanLearningV450 = false;
+            diagnostic("[学习真人V4.50] 未能启动触摸监听");
+            return false;
+        }
+
+        diagnostic("[学习真人V4.50] 已开始被动学习；仅闲鱼前台有效。"
+                + "记录点击按压、完整滑动轨迹、弧度、速度变化和操作间停顿；不自动点击。");
+        TaskStatusReceiver.writeLog(
+                lastContext,
+                "INFO",
+                "学习真人",
+                "开始被动学习真人手势，仅记录闲鱼前台触摸"
+        );
+        return true;
+    }
+
+    public static synchronized void stopStandaloneHumanLearningV450() {
+        if (!standaloneHumanLearningV450) return;
+        standaloneHumanLearningV450 = false;
+        standaloneHumanLearningStartedAtV450 = 0L;
+        stopPhysicalTouchMonitorV48();
+        if (lastContext != null) {
+            TaskStatusReceiver.writeLog(
+                    lastContext,
+                    "INFO",
+                    "学习真人",
+                    "停止学习；" + HumanGestureStyleStore.summary(lastContext)
+            );
+        }
+    }
+
     public static void requestStop(String reason) {
         if (running) markUserAbortV48(reason == null || reason.isEmpty() ? "用户请求停止" : reason);
     }
@@ -265,6 +337,14 @@ public final class TaskExecutor {
             return;
         }
         lastContext = context.getApplicationContext();
+        // Automation and passive learning never run at the same time. Otherwise
+        // synthetic touches could pollute the human profile.
+        standaloneHumanLearningV450 = false;
+        try {
+            context.stopService(new Intent(context, HumanLearningForegroundService.class));
+        } catch (Throwable ignored) {
+        }
+        stopPhysicalTouchMonitorV48();
         // A prior 90s passive observer must never overlap a new automation run.
         // In particular, its final ScreenOcr.close() must not race the new solver.
         stopHumanTeachingCaptureV464();
