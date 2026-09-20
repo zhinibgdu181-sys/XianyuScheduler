@@ -33,10 +33,10 @@ public class FruitRuleDecisionEngineTest {
 
     private static FruitTemplateMatcher.State state(
             java.util.List<FruitTemplateMatcher.DetectedFruit> board,
-            java.util.List<FruitTemplateMatcher.DetectedFruit> tray
+            java.util.List<FruitTemplateMatcher.DetectedFruit> trayBottomToTop
     ) {
         return new FruitTemplateMatcher.State(
-                1080, 2400, board, tray
+                1080, 2400, board, trayBottomToTop
         );
     }
 
@@ -59,7 +59,7 @@ public class FruitRuleDecisionEngineTest {
     }
 
     @Test
-    public void oneTrayFruitPrioritizesSameType() {
+    public void oneTrayFruitPrioritizesItsTopType() {
         FruitTemplateMatcher.State s = state(
                 Arrays.asList(
                         d("A", 100, 500, true),
@@ -77,37 +77,35 @@ public class FruitRuleDecisionEngineTest {
     }
 
     @Test
-    public void twoDifferentTrayFruitsNeverAllowThirdType() {
+    public void oneTrayFruitCanStageNewTypeWhenTopMatchMissing() {
         FruitTemplateMatcher.State s = state(
                 Arrays.asList(
-                        d("C", 100, 500, true),
-                        d("C", 300, 600, true)
+                        d("B", 300, 600, true),
+                        d("B", 500, 700, true),
+                        d("C", 700, 800, true)
                 ),
-                Arrays.asList(
-                        d("A", 500, 1900, true),
-                        d("B", 580, 1900, true)
-                )
+                Collections.singletonList(d("A", 540, 1900, true))
         );
 
         FruitRuleDecisionEngine.Decision decision =
                 FruitRuleDecisionEngine.decide(s, new HashSet<>());
 
-        assertEquals(
-                FruitRuleDecisionEngine.Kind.RESTART_DEADLOCK,
-                decision.kind
-        );
+        assertEquals(FruitRuleDecisionEngine.Kind.CLICK_FRUIT, decision.kind);
+        assertEquals("B", decision.target.type);
     }
 
     @Test
-    public void twoDifferentTrayFruitsClickOnlyExistingTypeWhenAvailable() {
+    public void twoDifferentTrayFruitsCanOnlyMatchCurrentTop() {
+        // bottom A, top B
         FruitTemplateMatcher.State s = state(
                 Arrays.asList(
-                        d("C", 100, 500, true),
-                        d("B", 300, 600, true)
+                        d("A", 100, 500, true),
+                        d("B", 300, 600, true),
+                        d("C", 500, 700, true)
                 ),
                 Arrays.asList(
                         d("A", 500, 1900, true),
-                        d("B", 580, 1900, true)
+                        d("B", 540, 1800, true)
                 )
         );
 
@@ -119,39 +117,16 @@ public class FruitRuleDecisionEngineTest {
     }
 
     @Test
-    public void threeDifferentFullTrayOnlyAllowsExistingType() {
+    public void twoDifferentTrayFruitsRestartWhenOnlyLowerTypeExists() {
+        // bottom A, top B; exposed A does NOT help because A is not the top.
         FruitTemplateMatcher.State s = state(
                 Arrays.asList(
-                        d("D", 100, 500, true),
-                        d("C", 300, 600, true)
+                        d("A", 100, 500, true),
+                        d("C", 500, 700, true)
                 ),
                 Arrays.asList(
-                        d("A", 460, 1900, true),
-                        d("B", 540, 1900, true),
-                        d("C", 620, 1900, true)
-                )
-        );
-
-        FruitRuleDecisionEngine.Decision decision =
-                FruitRuleDecisionEngine.decide(s, new HashSet<>());
-
-        assertEquals(FruitRuleDecisionEngine.Kind.CLICK_FRUIT, decision.kind);
-        assertNotNull(decision.target);
-        assertEquals("C", decision.target.type);
-    }
-
-    @Test
-    public void threeDifferentFullTrayRestartsWhenNoExistingTypeIsExposed() {
-        FruitTemplateMatcher.State s = state(
-                Arrays.asList(
-                        d("D", 100, 500, true),
-                        d("E", 300, 600, true),
-                        d("A", 500, 700, false)
-                ),
-                Arrays.asList(
-                        d("A", 460, 1900, true),
-                        d("B", 540, 1900, true),
-                        d("C", 620, 1900, true)
+                        d("A", 500, 1900, true),
+                        d("B", 540, 1800, true)
                 )
         );
 
@@ -165,13 +140,14 @@ public class FruitRuleDecisionEngineTest {
     }
 
     @Test
-    public void duplicateInThreeSlotSnapshotWaitsForAutoElimination() {
+    public void topAdjacentPairWaitsForAutoElimination() {
+        // bottom A, then B, top B => only the top B,B pair can auto-clear.
         FruitTemplateMatcher.State s = state(
                 Collections.singletonList(d("C", 300, 600, true)),
                 Arrays.asList(
                         d("A", 460, 1900, true),
-                        d("A", 540, 1900, true),
-                        d("B", 620, 1900, true)
+                        d("B", 540, 1800, true),
+                        d("B", 620, 1700, true)
                 )
         );
 
@@ -180,6 +156,75 @@ public class FruitRuleDecisionEngineTest {
 
         assertEquals(
                 FruitRuleDecisionEngine.Kind.WAIT_TRANSIENT,
+                decision.kind
+        );
+    }
+
+    @Test
+    public void separatedSameTypeDoesNotAutoEliminate() {
+        // bottom A, middle B, top A: two As are separated by B.
+        FruitTemplateMatcher.State s = state(
+                Collections.singletonList(d("A", 300, 600, true)),
+                Arrays.asList(
+                        d("A", 460, 1900, true),
+                        d("B", 540, 1800, true),
+                        d("A", 620, 1700, true)
+                )
+        );
+
+        FruitRuleDecisionEngine.Decision decision =
+                FruitRuleDecisionEngine.decide(s, new HashSet<>());
+
+        assertEquals(FruitRuleDecisionEngine.Kind.CLICK_FRUIT, decision.kind);
+        assertNotNull(decision.target);
+        assertEquals("A", decision.target.type);
+    }
+
+    @Test
+    public void fullStackOnlyCurrentTopTypeIsSafe() {
+        // bottom A, B, top C. Exposed A/B/D must be ignored; only C is safe.
+        FruitTemplateMatcher.State s = state(
+                Arrays.asList(
+                        d("A", 100, 500, true),
+                        d("B", 300, 600, true),
+                        d("C", 500, 700, true),
+                        d("D", 700, 800, true)
+                ),
+                Arrays.asList(
+                        d("A", 460, 1900, true),
+                        d("B", 540, 1800, true),
+                        d("C", 620, 1700, true)
+                )
+        );
+
+        FruitRuleDecisionEngine.Decision decision =
+                FruitRuleDecisionEngine.decide(s, new HashSet<>());
+
+        assertEquals(FruitRuleDecisionEngine.Kind.CLICK_FRUIT, decision.kind);
+        assertEquals("C", decision.target.type);
+    }
+
+    @Test
+    public void fullStackRestartsWhenCurrentTopHasNoExposedMatch() {
+        FruitTemplateMatcher.State s = state(
+                Arrays.asList(
+                        d("A", 100, 500, true),
+                        d("B", 300, 600, true),
+                        d("C", 500, 700, false),
+                        d("D", 700, 800, true)
+                ),
+                Arrays.asList(
+                        d("A", 460, 1900, true),
+                        d("B", 540, 1800, true),
+                        d("C", 620, 1700, true)
+                )
+        );
+
+        FruitRuleDecisionEngine.Decision decision =
+                FruitRuleDecisionEngine.decide(s, new HashSet<>());
+
+        assertEquals(
+                FruitRuleDecisionEngine.Kind.RESTART_DEADLOCK,
                 decision.kind
         );
     }
