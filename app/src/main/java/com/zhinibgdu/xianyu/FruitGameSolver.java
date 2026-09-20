@@ -267,6 +267,11 @@ public final class FruitGameSolver {
              * coordinates.
              */
             boolean routeBroken = false;
+            ScreenOcr.Snapshot beforeActionOcr = host.ocr("水果配对前剩余数");
+            int remainingBeforeAction = extractRemainingCount(
+                    beforeActionOcr == null ? "" : beforeActionOcr.fullText
+            );
+
             for (int routeIndex = 0;
                     routeIndex < plan.clicks.size();
                     routeIndex++) {
@@ -345,17 +350,41 @@ public final class FruitGameSolver {
                 int afterCount = after.boardFruits.size();
                 int structuralChange = current.fingerprintChangesAgainst(after);
 
-                if (afterCount < beforeCount || structuralChange >= 1) {
-                    host.log("[水果验证] 路线段成功："
-                            + beforeCount + " -> " + afterCount
+                ScreenOcr.Snapshot afterActionOcr = host.ocr("水果配对后剩余数");
+                int remainingAfterAction = extractRemainingCount(
+                        afterActionOcr == null ? "" : afterActionOcr.fullText
+                );
+
+                /*
+                 * A visual change alone is not enough. A wrong tap can move a
+                 * fruit, open a tray, or trigger an animation and still produce
+                 * a different screenshot. For this game the strongest observable
+                 * proof of a successful pair is that the "剩余" counter drops.
+                 * If OCR is unavailable, require a clear two-object reduction
+                 * instead of accepting a one-pixel/one-object vision jitter.
+                 */
+                boolean remainingDropped =
+                        remainingBeforeAction >= 0
+                                && remainingAfterAction >= 0
+                                && remainingAfterAction < remainingBeforeAction;
+                boolean clearBoardReduction = afterCount <= beforeCount - 2;
+
+                if (remainingDropped || clearBoardReduction) {
+                    host.log("[水果验证] 配对确认成功："
+                            + "剩余=" + remainingBeforeAction + "->"
+                            + remainingAfterAction
+                            + "，识别对象=" + beforeCount + "->" + afterCount
                             + "，结构变化=" + structuralChange);
                     current = after;
                     noProgress = 0;
                     continue;
                 }
 
-                host.log("[水果验证] 路线段未产生可确认变化，"
-                        + "立即废弃剩余路线并重新搜索");
+                host.log("[水果验证] 点击后没有证据证明完成一组配对："
+                        + "剩余=" + remainingBeforeAction + "->"
+                        + remainingAfterAction
+                        + "，对象=" + beforeCount + "->" + afterCount
+                        + "；立即废弃路线并重新识别");
                 routeBroken = true;
                 noProgress++;
                 break;
