@@ -78,7 +78,7 @@ public final class FruitGameSolver {
     }
 
     private static final long MAX_ROUND_MS = 10L * 60_000L;
-    private static final long UI_PROBE_INTERVAL_MS = 900L;
+    private static final long UI_PROBE_INTERVAL_MS = 2_200L;
     /**
      * The game shows its own idle ad/reward layer after a period without input.
      * This is a watchdog threshold, not a reason to synthesize arbitrary taps.
@@ -103,7 +103,7 @@ public final class FruitGameSolver {
         FruitBoardState current = null;
         Set<String> failedActionKeys = new HashSet<>();
 
-        host.log("[水果新求解器] 开始：完整截图→识别→搜索→执行→验证");
+        host.log("[水果新求解器] 开始：当前帧识别→选一对同类→快速双击→验证→重看");
         host.log("[水果新求解器] 不继承旧 FruitGameSolver 的局部决策链");
 
         while (!host.aborted() && System.currentTimeMillis() < deadline) {
@@ -333,11 +333,11 @@ public final class FruitGameSolver {
                     // real recording shows a visible gravity/roof-roll phase;
                     // the old 90ms gap often tapped the second fruit before the
                     // first had opened its fall corridor.
-                    if (!host.sleep(420L, 620L)) return Result.ABORTED;
+                    if (!host.sleep(180L, 280L)) return Result.ABORTED;
                     continue;
                 }
 
-                if (!host.sleep(420L, 650L)) return Result.ABORTED;
+                if (!host.sleep(320L, 480L)) return Result.ABORTED;
 
                 // UNLOCK is intentionally a one-click route. It must be
                 // re-observed before another action is allowed.
