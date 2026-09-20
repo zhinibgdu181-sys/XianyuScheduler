@@ -25,13 +25,18 @@ final class FruitVisionEngine {
     // top fruits and treated lower UI/decorations as tray contents.
     private static final float BOARD_TOP = 0.00f;
     private static final float BOARD_BOTTOM = 0.60f;
-    // Central collector only. In the real recording, a pending fruit sits in
-    // the narrow gap between the roofs around y=0.72..0.82. Restricting both
-    // axes avoids the old false tray=4 caused by roofs/buttons/decorations.
+    // Real collector/chute calibration from successful 13733/13735 runs:
+    // settled fruits sit in the narrow vertical cyan chute around x≈0.50W,
+    // with the bottom fruit near y≈0.83H. Three stacked fruits can extend
+    // upward, so keep the full central chute from y≈0.70H to 0.86H.
+    //
+    // The important fix is the narrow X window: the old x=0.40..0.60 ROI
+    // included both roof/wall edges and created two fake UNKNOWN tray fruits.
+    // In 13749.mp4 the x=0.44..0.56 chute is clean cyan when truly empty.
     private static final float TRAY_TOP = 0.70f;
-    private static final float TRAY_BOTTOM = 0.82f;
-    private static final float TRAY_LEFT = 0.40f;
-    private static final float TRAY_RIGHT = 0.60f;
+    private static final float TRAY_BOTTOM = 0.86f;
+    private static final float TRAY_LEFT = 0.44f;
+    private static final float TRAY_RIGHT = 0.56f;
 
     private FruitVisionEngine() {}
 

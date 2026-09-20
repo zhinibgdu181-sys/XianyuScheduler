@@ -102,7 +102,7 @@ public final class FruitGameSolver {
         int badVisionStreak = 0;
         int unknownTrayStreak = 0;
 
-        host.log("[水果规则引擎] 4.47.0：模板类别 + 三槽状态机");
+        host.log("[水果规则引擎] 4.47.2：模板类别 + 栈顶三槽状态机");
         host.log("[水果规则引擎] 只点击模板已知且判定未遮挡的水果；死局直接重开");
 
         while (!host.aborted() && System.currentTimeMillis() < deadline) {
@@ -716,19 +716,29 @@ public final class FruitGameSolver {
 
         if (looksLikeRewardToolPopup(text)) {
             ScreenOcr.Item close = findToolModalCloseCandidate(snapshot);
-            // Measured from 13737.mp4: close button center is about
-            // (879,500) on 1080x2340 => normalized (0.814, 0.214).
+            // Re-measured from 13749.mp4 with a 100px grid:
+            // X button center ≈ (930,655) on 1080x2340
+            // => normalized ≈ (0.861, 0.280)
+            // => ≈ (1240,874) on 1440x3120.
             int closeX = close != null
-                    ? close.centerX() : Math.round(snapshot.width * 0.814f);
+                    ? close.centerX() : Math.round(snapshot.width * 0.861f);
             int closeY = close != null
-                    ? close.centerY() : Math.round(snapshot.height * 0.214f);
+                    ? close.centerY() : Math.round(snapshot.height * 0.280f);
 
             if (GameTapPolicy.allows(
                     closeX, closeY, snapshot.width, snapshot.height,
                     "FRUIT_TOOL_MODAL_CLOSE")
                     && host.tap(closeX, closeY, "FRUIT_TOOL_MODAL_CLOSE")) {
-                host.log("[水果弹窗] 已关闭奖励道具弹窗；不点击视频/使用按钮");
-                return UiDecision.POPUP_CLOSED;
+                host.sleep(180L, 260L);
+                ScreenOcr.Snapshot verify = host.ocr("水果奖励弹窗关闭验证");
+                if (verify == null || verify.isEmpty()
+                        || !looksLikeRewardToolPopup(verify.fullText)) {
+                    host.log("[水果弹窗] 奖励道具弹窗已确认关闭；不点击视频/使用按钮");
+                    return UiDecision.POPUP_CLOSED;
+                }
+                host.log("[水果弹窗] 关闭点击未生效，弹窗仍存在 @"
+                        + closeX + "," + closeY);
+                return UiDecision.NONE;
             }
 
             host.log("[水果弹窗] 已识别奖励道具弹窗，但关闭坐标未通过安全白名单");
@@ -805,11 +815,11 @@ public final class FruitGameSolver {
 
             double nx = item.centerX() / (double) Math.max(1, snapshot.width);
             double ny = item.centerY() / (double) Math.max(1, snapshot.height);
-            if (nx < .76 || nx > .87 || ny < .17 || ny > .26) continue;
+            if (nx < .82 || nx > .90 || ny < .245 || ny > .32) continue;
 
             int score = 100
-                    - (int) (Math.abs(nx - .814) * 300)
-                    - (int) (Math.abs(ny - .214) * 300);
+                    - (int) (Math.abs(nx - .861) * 300)
+                    - (int) (Math.abs(ny - .280) * 300);
             if (score > bestScore) {
                 bestScore = score;
                 best = item;
