@@ -70,7 +70,7 @@ public final class FruitGameSolver {
     }
 
     private static final long MAX_ROUND_MS = 120_000L;
-    private static final long UI_PROBE_INTERVAL_MS = 1_500L;
+    private static final long UI_PROBE_INTERVAL_MS = 4_000L;
     private static final int MAX_NO_PROGRESS = 4;
 
     private FruitGameSolver() {}
@@ -329,8 +329,13 @@ public final class FruitGameSolver {
     }
 
     public static boolean looksLikeBlockingFunctionPopupText(String text) {
-        return text != null && containsAny(text,
-                "打乱", "消除", "解锁", "加槽", "购买", "道具", "使用道具");
+        if (text == null) return false;
+        // Normal board controls such as "打乱" and "消除" are not popup evidence.
+        // Require explicit modal/confirmation language before attempting a close.
+        return containsAny(text,
+                "弹窗", "弹出", "复活", "继续游戏", "免费观看",
+                "购买道具", "道具已获得", "确定", "取消", "关闭", "知道了",
+                "再试一次", "再来一次");
     }
 
     public static boolean isBlockedPosition(int x, int y, int width, int height) {
