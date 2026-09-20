@@ -200,6 +200,10 @@ public final class TaskExecutor {
     private static volatile boolean lastTaskAbandonedV460 = false;
     private static volatile String lastTaskAbandonedReasonV460 = "";
 
+    // V4.48.1: local-task preflight. Polish listings at most once per
+    // automation run so recovery/navigation cannot repeat the action.
+    private static volatile boolean listingPolishAttemptedV448 = false;
+
     private static final String PROFILE_PREFS_V48 = "xianyu_task_profiles_v48";
     private static final int PROFILE_SCHEMA_V411 = 411;
     private static final long FEATURE_TTL_MS_V411 = 90L * 24L * 60L * 60L * 1000L;
@@ -278,6 +282,7 @@ public final class TaskExecutor {
         gameIncompleteTaskV421 = "";
         lastTaskAbandonedV460 = false;
         lastTaskAbandonedReasonV460 = "";
+        listingPolishAttemptedV448 = false;
         currentExecutingTaskV464 = "";
         lastTeachingBeforeV480 = null;
         invalidateOcrCacheV411();
@@ -670,7 +675,30 @@ public final class TaskExecutor {
         if (page.kind == PageKindV411.COIN_HOME) {
             // fall through; reuse this exact OCR frame to click earn-dice.
         } else if (page.kind == PageKindV411.MINE) {
-            // MINE -> COIN_HOME. Reuse the OCR frame that confirmed MINE.
+            // Local-task preflight: 我的 -> 我发布的 -> 一键擦亮 -> 返回我的.
+            // This is intentionally done before entering 闲鱼币 so it never
+            // interferes with the task-panel scanner.
+            if (shouldRunListingPolishV448()) {
+                performListingPolishV448(suPath, page.ocr);
+                if (userAborted || physicalTouchDetected) return false;
+
+                invalidateOcrCacheV411();
+                page = probePageV411(suPath, "一键擦亮后确认我的页");
+                if (page.kind != PageKindV411.MINE) {
+                    diagnostic("[一键擦亮V4.48.1] 返回后未确认‘我的’页，尝试一次安全返回");
+                    if (!preferredRightBackOnceV410(suPath, "一键擦亮返回我的")
+                            || !sleepAbortableV48(500L)) {
+                        return false;
+                    }
+                    page = probePageV411(suPath, "一键擦亮二次返回确认");
+                    if (page.kind != PageKindV411.MINE) {
+                        diagnostic("[一键擦亮V4.48.1] 无法安全恢复‘我的’页，停止本轮导航");
+                        return false;
+                    }
+                }
+            }
+
+            // MINE -> COIN_HOME. Reuse the fresh OCR frame after polish.
             diagnostic("[极速导航V4.26] 复用‘我的’页OCR，立即点击闲鱼币");
             boolean clickedCoin = clickOcrTextAnyV45(
                     suPath, page.ocr, false,
@@ -754,6 +782,150 @@ public final class TaskExecutor {
 
         diagnostic("❌ [极速导航V4.26] 无法打开‘得骰子赚闲鱼币’任务面板");
         return false;
+    }
+
+    private static boolean shouldRunListingPolishV448() {
+        if (listingPolishAttemptedV448 || lastContext == null) return false;
+        if (activeCategory == TaskCategory.LOCAL) return true;
+        return activeCategory == TaskCategory.ALL
+                && AppConfig.isLocalTaskEnabled(lastContext);
+    }
+
+    /**
+     * V4.48.1 local preflight:
+     * 我的 -> 我发布的 -> 一键擦亮 -> 返回我的.
+     *
+     * The action is attempted once per run. It never clicks item-level
+     * “加曝光/降价/编辑” buttons.
+     */
+    private static void performListingPolishV448(
+            String suPath,
+            ScreenOcr.Snapshot mineSnapshot
+    ) {
+        if (listingPolishAttemptedV448) return;
+        listingPolishAttemptedV448 = true;
+
+        if (userAborted || physicalTouchDetected || !ensureFg(suPath)) return;
+
+        ScreenOcr.Snapshot mine = mineSnapshot;
+        if (mine == null || mine.isEmpty() || !isMinePageV45(null, mine)) {
+            mine = captureOcrV45(suPath, "一键擦亮/确认我的页");
+        }
+        if (!isMinePageV45(null, mine)) {
+            diagnostic("[一键擦亮V4.48.1] 当前不是‘我的’页，跳过本次擦亮");
+            return;
+        }
+
+        diagnostic("[一键擦亮V4.48.1] 已确认‘我的’页，进入‘我发布的’");
+        boolean opened = clickOcrTextAnyV45(
+                suPath, mine, false,
+                "我发布的", "我的发布"
+        );
+        if (!opened) {
+            // 13750.jpg: “我发布的”中心约 x=0.11W, y=0.38H.
+            diagnostic("[一键擦亮V4.48.1] OCR未找到‘我发布的’，使用实机比例坐标兜底");
+            opened = tapByRatioV43(
+                    suPath, 0.11f, 0.38f,
+                    "本地任务-我的-我发布的", false
+            );
+        }
+        if (!opened) {
+            diagnostic("[一键擦亮V4.48.1] 无法进入‘我发布的’，跳过");
+            return;
+        }
+
+        ScreenOcr.Snapshot listings = waitMyListingsPageV448(suPath, 5600L);
+        if (listings == null || listings.isEmpty()) {
+            diagnostic("[一键擦亮V4.48.1] 未确认‘我的发布’页，安全返回");
+            preferredRightBackOnceV410(suPath, "未确认我的发布页");
+            sleepAbortableV48(450L);
+            return;
+        }
+
+        ScreenOcr.Item polish = listings.findBest("一键擦亮");
+        boolean polished = false;
+        if (polish != null) {
+            String text = polish.text == null ? "" : polish.text.replaceAll("\\s+", "");
+            float nx = listings.width <= 0 ? 0f
+                    : (float) polish.centerX() / (float) listings.width;
+            float ny = listings.height <= 0 ? 0f
+                    : (float) polish.centerY() / (float) listings.height;
+
+            // Screenshot 13752 places the yellow 一键擦亮 button in the
+            // upper-left 今日数据 card. Reject any similarly named text outside
+            // that card so “加曝光/降价/编辑” can never be mistaken for it.
+            if (text.contains("一键擦亮")
+                    && nx >= 0.04f && nx <= 0.36f
+                    && ny >= 0.18f && ny <= 0.34f) {
+                if (ensureFg(suPath)) {
+                    diagnostic("[一键擦亮V4.48.1] OCR点击‘一键擦亮’ → "
+                            + polish.centerX() + "," + polish.centerY());
+                    RootResult tap = rootWithPath(
+                            suPath,
+                            "input tap " + polish.centerX() + " " + polish.centerY()
+                    );
+                    polished = tap.exitCode == 0;
+                }
+            } else {
+                diagnostic("[一键擦亮V4.48.1] OCR候选不在顶部黄色按钮安全区，拒绝："
+                        + text + " @" + polish.centerX() + "," + polish.centerY());
+            }
+        }
+
+        if (!polished) {
+            // 13752.jpg: button center ≈ x=0.18W, y=0.255H.
+            // This fallback is permitted only after the page itself is positively
+            // identified as “我的发布”.
+            diagnostic("[一键擦亮V4.48.1] 使用已确认‘我的发布’页比例坐标点击黄色按钮");
+            polished = tapByRatioV43(
+                    suPath, 0.18f, 0.255f,
+                    "本地任务-我的发布-一键擦亮", false
+            );
+        }
+
+        if (polished) {
+            diagnostic("[一键擦亮V4.48.1] ✅ 已点击一次‘一键擦亮’；不点击加曝光/降价/编辑");
+            sleepAbortableV48(650L);
+        } else {
+            diagnostic("[一键擦亮V4.48.1] ⚠️ ‘一键擦亮’点击失败");
+        }
+
+        // Always leave the listings page after the single attempt.
+        if (!preferredRightBackOnceV410(suPath, "一键擦亮完成返回我的")) {
+            rootWithPath(suPath, "input keyevent KEYCODE_BACK");
+        }
+        waitMinePageV45(suPath, 4200L);
+    }
+
+    private static ScreenOcr.Snapshot waitMyListingsPageV448(
+            String suPath,
+            long timeoutMs
+    ) {
+        long end = SystemClock.elapsedRealtime() + Math.max(1200L, timeoutMs);
+        while (!userAborted
+                && !physicalTouchDetected
+                && SystemClock.elapsedRealtime() < end) {
+            invalidateOcrCacheV411();
+            ScreenOcr.Snapshot snapshot =
+                    captureOcrV45(suPath, "等待我的发布页");
+            if (isMyListingsPageV448(snapshot)) return snapshot;
+            if (!sleepAbortableV48(220L)) break;
+        }
+        return ScreenOcr.Snapshot.empty();
+    }
+
+    private static boolean isMyListingsPageV448(ScreenOcr.Snapshot snapshot) {
+        if (snapshot == null || snapshot.isEmpty()) return false;
+        String text = snapshot.fullText == null ? "" : snapshot.fullText;
+        if (!text.contains("我的发布")) return false;
+
+        int score = 0;
+        if (text.contains("今日数据")) score++;
+        if (text.contains("在卖")) score++;
+        if (text.contains("草稿")) score++;
+        if (text.contains("已下架")) score++;
+        if (text.contains("一键擦亮")) score += 2;
+        return score >= 2;
     }
 
     private static boolean dismissOpeningAdV47(String suPath) {
