@@ -58,13 +58,6 @@ final class FruitRuleDecisionEngine {
                 ? new HashSet<>() : blockedActions;
 
         int trayCount = state.stableTrayCount();
-        if (trayCount >= 4) {
-            return new Decision(
-                    Kind.WAIT_TRANSIENT,
-                    null,
-                    "检测到第4颗瞬时叠加，等待自动消除/失败结果"
-            );
-        }
 
         if (state.unknownTrayCount() > 0) {
             return new Decision(
@@ -82,79 +75,87 @@ final class FruitRuleDecisionEngine {
         List<FruitTemplateMatcher.DetectedFruit> clickable =
                 clickableBoard(state, blocked);
 
-        // 状态1：槽位0个。选择当前未遮挡水果中数量最多的一类。
+        /*
+         * IMPORTANT: the collector is a vertical LIFO stack. trayTypes is
+         * bottom->top. Only the TOP fruit can pair with a newly clicked fruit.
+         *
+         * Example:
+         *   bottom A
+         *          B
+         *   top    A
+         * does NOT auto-clear the two As because B separates them.
+         */
+        if (trayCount >= 4) {
+            return new Decision(
+                    Kind.WAIT_TRANSIENT,
+                    null,
+                    "检测到第4颗叠加，停止追加点击，等待顶部二消或失败结果"
+            );
+        }
+
+        // Empty stack: choose the most abundant currently exposed type.
         if (trayCount == 0) {
             FruitTemplateMatcher.DetectedFruit target =
                     chooseMostNumerous(clickable, null);
             if (target == null) {
-                return deadlock("槽位为空但没有任何已识别、未遮挡水果可点");
+                return deadlock("槽位为空但没有已识别、未遮挡水果可点");
             }
-            return click(target, "状态1：槽位0个，点击未遮挡数量最多的水果");
+            return click(target, "空槽：点击未遮挡数量最多的水果");
         }
 
-        // 状态1：槽位1个。优先补齐槽内同类；没有才选未遮挡数量最多。
-        if (trayCount == 1) {
-            String a = trayTypes.get(0);
-            FruitTemplateMatcher.DetectedFruit match =
-                    chooseBestOfTypes(clickable, setOf(a));
-            if (match != null) {
-                return click(match, "状态1：槽位1个，优先点击槽内同类 " + a);
-            }
+        String top = trayTypes.get(trayTypes.size() - 1);
 
+        // If the TOP TWO are already the same, they are the only pair eligible
+        // to auto-clear. Wait for animation; do not add another fruit.
+        if (trayCount >= 2) {
+            String belowTop = trayTypes.get(trayTypes.size() - 2);
+            if (top.equals(belowTop)) {
+                return new Decision(
+                        Kind.WAIT_TRANSIENT,
+                        null,
+                        "槽顶两颗同类 " + top + "，等待自动二消"
+                );
+            }
+        }
+
+        // Any non-empty stack first tries to match the CURRENT TOP.
+        FruitTemplateMatcher.DetectedFruit topMatch =
+                chooseBestOfTypes(clickable, setOf(top));
+        if (topMatch != null) {
+            return click(
+                    topMatch,
+                    "栈顶规则：只补当前顶部 " + top + " 形成相邻二消"
+            );
+        }
+
+        // With one fruit only, there is still one safe staging slot. If the
+        // top cannot be matched, push one abundant new type and make it the new
+        // top. From two occupied slots onward, introducing anything other than
+        // the top type creates A,B,A / A,B,C style non-clearing danger.
+        if (trayCount == 1) {
             FruitTemplateMatcher.DetectedFruit target =
                     chooseMostNumerous(clickable, null);
             if (target == null) {
-                return deadlock("槽位1个且没有任何未遮挡水果可点");
+                return deadlock("槽位1个且没有未遮挡水果可点");
             }
-            return click(target, "状态1：无槽内同类，点击未遮挡数量最多的水果");
+            return click(
+                    target,
+                    "槽位1个且无顶部同类：选择数量最多的新类型作为新栈顶"
+            );
         }
 
         if (trayCount == 2) {
-            String a = trayTypes.get(0);
-            String b = trayTypes.get(1);
-
-            // 状态2：A,A。按用户规则立刻继续点A。
-            if (a.equals(b)) {
-                FruitTemplateMatcher.DetectedFruit match =
-                        chooseBestOfTypes(clickable, setOf(a));
-                if (match == null) {
-                    return deadlock("状态2：槽位A,A，但场上没有未遮挡A");
-                }
-                return click(match, "状态2：槽位A,A，立刻点击A");
-            }
-
-            // 状态3：A,B。只能点A或B，禁止引入第三种。
-            FruitTemplateMatcher.DetectedFruit match =
-                    chooseBestOfTypes(clickable, setOf(a, b));
-            if (match == null) {
-                return deadlock(
-                        "状态3：槽位A,B且场上无未遮挡A/B，禁止点击新种类"
-                );
-            }
-            return click(match, "状态3：槽位A,B，只允许点击A或B");
-        }
-
-        // trayCount == 3
-        Set<String> distinct = new HashSet<>(trayTypes);
-
-        // 二消应该自动清掉重复项；若截到了动画中间态，不再追加点击。
-        if (distinct.size() < 3) {
-            return new Decision(
-                    Kind.WAIT_TRANSIENT,
-                    null,
-                    "槽位3个但存在重复类型，等待二消动画完成"
-            );
-        }
-
-        // 状态4：A,B,C。只能点A/B/C；若不存在，立即死局重开。
-        FruitTemplateMatcher.DetectedFruit match =
-                chooseBestOfTypes(clickable, distinct);
-        if (match == null) {
             return deadlock(
-                    "状态4：槽位A,B,C已满且场上无未遮挡A/B/C，立即重开"
+                    "槽位已有2颗且当前栈顶 " + top
+                            + " 无可点同类；点击下层类型或新类型都不能消除"
             );
         }
-        return click(match, "状态4：槽位A,B,C已满，只点击已有种类触发消除");
+
+        // trayCount == 3. Stack is full; ONLY the current top type is safe.
+        return deadlock(
+                "槽位已满且当前栈顶 " + top
+                        + " 无可点同类；任何其他水果都会形成非相邻堆叠/失败"
+        );
     }
 
     private static Decision click(

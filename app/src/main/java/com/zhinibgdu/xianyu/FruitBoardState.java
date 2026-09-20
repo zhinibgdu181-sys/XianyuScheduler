@@ -18,7 +18,13 @@ final class FruitBoardState {
         List<Fruit> board = boardFruits == null ? Collections.emptyList() : new ArrayList<>(boardFruits);
         List<Fruit> tray = trayFruits == null ? Collections.emptyList() : new ArrayList<>(trayFruits);
         board.sort(Comparator.comparingInt((Fruit f) -> f.centerY).thenComparingInt(f -> f.centerX));
-        tray.sort(Comparator.comparingInt((Fruit f) -> f.centerX));
+        // Collector is a vertical stack. Keep deterministic
+        // bottom->top order: larger screen Y is physically lower in the stack.
+        tray.sort(
+                Comparator.comparingInt((Fruit f) -> f.centerY)
+                        .reversed()
+                        .thenComparingInt(f -> f.centerX)
+        );
         this.boardFruits = Collections.unmodifiableList(board);
         this.trayFruits = Collections.unmodifiableList(tray);
     }
