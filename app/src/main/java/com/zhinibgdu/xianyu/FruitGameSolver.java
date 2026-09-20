@@ -798,8 +798,9 @@ public final class FruitGameSolver {
     private static int extractRemainingCount(String text) {
         if (text == null || text.isEmpty()) return -1;
         java.util.regex.Matcher matcher =
-                java.util.regex.Pattern.compile("剩余\\s*([0-9]{1,4})")
-                        .matcher(text);
+                java.util.regex.Pattern.compile(
+                        "(?:剩余|剩小|还剩)\\s*([0-9]{1,4})"
+                ).matcher(text);
         if (!matcher.find()) return -1;
         try {
             return Integer.parseInt(matcher.group(1));
