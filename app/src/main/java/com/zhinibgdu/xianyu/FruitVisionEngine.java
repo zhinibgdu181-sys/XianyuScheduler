@@ -171,8 +171,9 @@ final class FruitVisionEngine {
     ) {
         List<FruitBoardState.Fruit> result = new ArrayList<>();
         for (FruitBoardState.Fruit candidate : input) {
-            boolean merged = false;
-            for (FruitBoardState.Fruit existing : result) {
+            int mergeIndex = -1;
+            for (int i = 0; i < result.size(); i++) {
+                FruitBoardState.Fruit existing = result.get(i);
                 double distance = Math.hypot(
                         candidate.centerX - existing.centerX,
                         candidate.centerY - existing.centerY
@@ -180,15 +181,18 @@ final class FruitVisionEngine {
                 double color = candidate.colorDistance(existing);
                 if (distance < Math.min(candidate.width(), existing.width()) * 0.36
                         && color < 0.18) {
-                    if (candidate.pixelArea > existing.pixelArea) {
-                        result.remove(existing);
-                        result.add(candidate);
-                    }
-                    merged = true;
+                    mergeIndex = i;
                     break;
                 }
             }
-            if (!merged) result.add(candidate);
+            if (mergeIndex >= 0) {
+                FruitBoardState.Fruit existing = result.get(mergeIndex);
+                if (candidate.pixelArea > existing.pixelArea) {
+                    result.set(mergeIndex, candidate);
+                }
+            } else {
+                result.add(candidate);
+            }
         }
         return result;
     }
