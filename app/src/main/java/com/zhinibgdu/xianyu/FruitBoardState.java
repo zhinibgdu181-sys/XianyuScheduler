@@ -23,7 +23,7 @@ final class FruitBoardState {
         this.trayFruits = Collections.unmodifiableList(tray);
     }
 
-    int trayCount() { return Math.min(3, trayFruits.size()); }
+    int trayCount() { return Math.min(4, trayFruits.size()); }
 
     boolean isEmpty() { return boardFruits.isEmpty() && trayFruits.isEmpty(); }
 
@@ -127,11 +127,14 @@ final class FruitBoardState {
             // Mean colour/hue remain useful as a fallback for frames where the
             // patch could not be sampled.
             if (visualGrid.length > 0 && other.visualGrid.length == visualGrid.length) {
-                return 0.40 * grid
-                        + 0.18 * rgb
-                        + 0.12 * hue
-                        + 0.08 * sv
-                        + 0.14 * hist
+                // The local patch is useful, but it is deliberately not dominant:
+                // the fruit can move/rotate a few pixels between frames. Histogram
+                // and colour statistics are more stable identity cues.
+                return 0.24 * grid
+                        + 0.17 * rgb
+                        + 0.16 * hue
+                        + 0.09 * sv
+                        + 0.26 * hist
                         + 0.05 * areaRatio
                         + 0.03 * aspect;
             }
@@ -146,14 +149,38 @@ final class FruitBoardState {
 
         private double visualGridDistance(Fruit other) {
             if (other == null || visualGrid.length == 0
-                    || other.visualGrid.length != visualGrid.length) {
+                    || other.visualGrid.length != visualGrid.length
+                    || visualGrid.length != 7 * 7 * 3) {
                 return 1.0;
             }
-            double total = 0.0;
-            for (int i = 0; i < visualGrid.length; i++) {
-                total += Math.abs(visualGrid[i] - other.visualGrid[i]);
+
+            // Compare a 7x7 patch with a ±1-cell translation tolerance. The old
+            // point-for-point comparison could report two identical fruits as
+            // unrelated when the detector centre moved only a few pixels.
+            double best = Double.MAX_VALUE;
+            final int n = 7;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    double total = 0.0;
+                    int samples = 0;
+                    for (int y = 0; y < n; y++) {
+                        int oy = y + dy;
+                        if (oy < 0 || oy >= n) continue;
+                        for (int x = 0; x < n; x++) {
+                            int ox = x + dx;
+                            if (ox < 0 || ox >= n) continue;
+                            int a = (y * n + x) * 3;
+                            int b = (oy * n + ox) * 3;
+                            total += Math.abs(visualGrid[a] - other.visualGrid[b]);
+                            total += Math.abs(visualGrid[a + 1] - other.visualGrid[b + 1]);
+                            total += Math.abs(visualGrid[a + 2] - other.visualGrid[b + 2]);
+                            samples += 3;
+                        }
+                    }
+                    if (samples > 0) best = Math.min(best, total / samples);
+                }
             }
-            return Math.min(1.0, total / visualGrid.length);
+            return Math.min(1.0, best);
         }
 
         double similarityDistance(Fruit other) { return colorDistance(other); }
