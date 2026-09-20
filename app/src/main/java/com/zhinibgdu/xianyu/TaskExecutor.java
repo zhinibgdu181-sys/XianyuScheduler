@@ -5908,7 +5908,7 @@ public final class TaskExecutor {
 
         String device = findTouchscreenDeviceV48(suPath);
         if (device == null || device.isEmpty()) {
-            diagnostic("[人工检测] 未识别到物理触摸设备，继续使用前台/状态检测");
+            diagnostic("[学习真人V4.50] 未识别到物理触摸设备");
             return;
         }
 
@@ -5920,26 +5920,25 @@ public final class TaskExecutor {
         final int touchMaxY = touchMax[1];
         physicalTouchMaxXV469 = touchMaxX;
         physicalTouchMaxYV469 = touchMaxY;
-        diagnostic("[人工检测V4.69] 触摸坐标范围：X=" + touchMaxX + " Y=" + touchMaxY
-                + "，屏幕=" + screenW + "x" + screenH);
         physicalTouchDevice = device;
-        diagnostic("[人工检测] 监听物理触摸设备：" + device);
 
-        // The tap that starts a task can still be completing while getevent is
-        // being attached. Arm the takeover detector after a short grace window
-        // so that the launch finger-up/down tail is not misclassified as a new
-        // manual takeover.
+        diagnostic("[学习真人V4.50] 触摸设备=" + device
+                + " raw=" + touchMaxX + "x" + touchMaxY
+                + " screen=" + screenW + "x" + screenH);
+
+        // Avoid learning the finger-up tail from tapping "开始学习/执行任务".
         final long monitorArmedAtV453 = SystemClock.elapsedRealtime() + 1200L;
 
         Thread thread = new Thread(() -> {
             Process process = null;
             int startX = -1, startY = -1, lastX = -1, lastY = -1;
-            float pathDistance = 0f;
             ArrayList<int[]> trajectory = new ArrayList<>();
             long downAt = 0L;
             long lastGestureEndAt = 0L;
             long pendingWaitMs = 0L;
             boolean gestureActive = false;
+            boolean gestureShouldLearn = false;
+
             try {
                 process = Runtime.getRuntime().exec(new String[]{
                         suPath,
@@ -5947,7 +5946,7 @@ public final class TaskExecutor {
                         "getevent -lt " + device + " 2>/dev/null"
                 });
                 touchMonitorProcess = process;
-                diagnostic("[人工检测V4.70] 已启动独立真人触摸监听：" + device);
+                diagnostic("[学习真人V4.50] getevent 已开始监听");
 
                 BufferedReader reader = new BufferedReader(
                         new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
@@ -5955,7 +5954,6 @@ public final class TaskExecutor {
 
                 String line;
                 while ((line = reader.readLine()) != null) {
-
                     String u = line.toUpperCase(Locale.US);
                     boolean touchDown =
                             (u.contains("BTN_TOUCH")
@@ -5969,156 +5967,200 @@ public final class TaskExecutor {
                                     || (u.contains("ABS_MT_TRACKING_ID")
                                     && (u.endsWith("FFFFFFFF") || u.endsWith("-1")));
 
+                    long now = SystemClock.elapsedRealtime();
+
                     Integer rawX = parseTouchCoordinateV467(u, "ABS_MT_POSITION_X");
                     Integer rawY = parseTouchCoordinateV467(u, "ABS_MT_POSITION_Y");
                     Integer x = normalizeTouchCoordinateV469(rawX, touchMaxX, screenW);
                     Integer y = normalizeTouchCoordinateV469(rawY, touchMaxY, screenH);
+
                     if (x != null) {
                         lastX = x;
-                        // BTN_TOUCH/TRACKING_ID may arrive before the first ABS position
-                        // events. Bind the gesture start to the first valid coordinates
-                        // instead of permanently keeping startX/startY at -1.
                         if (gestureActive && startX < 0) startX = x;
                     }
                     if (y != null) {
                         lastY = y;
                         if (gestureActive && startY < 0) startY = y;
                     }
-                    if (gestureActive && lastX >= 0 && lastY >= 0
+                    if (gestureActive && gestureShouldLearn
+                            && lastX >= 0 && lastY >= 0
                             && (x != null || y != null)) {
-                        appendGesturePointV472(trajectory, lastX, lastY);
+                        appendGesturePointTimedV450(
+                                trajectory,
+                                lastX,
+                                lastY,
+                                (int) Math.max(0L, now - downAt)
+                        );
                     }
 
-                    long now = SystemClock.elapsedRealtime();
-
                     if (touchDown) {
-                        // BTN_TOUCH and ABS_MT_TRACKING_ID can both announce the same
-                        // finger-down. Once a gesture is active, the second down is a
-                        // duplicate event, not a new gesture.
                         if (gestureActive) continue;
-                        if (now < monitorArmedAtV453) {
-                            diagnostic("[人工检测V4.53] 忽略任务启动后触摸尾事件，armIn="
-                                    + Math.max(0L, monitorArmedAtV453 - now) + "ms");
-                            continue;
-                        }
-                        if (lastGestureEndAt > 0L && now - lastGestureEndAt < 150L) {
-                            diagnostic("[人工检测V4.69] 忽略结束后的重复DOWN，delta="
-                                    + Math.max(0L, now - lastGestureEndAt) + "ms");
-                            continue;
-                        }
+                        if (now < monitorArmedAtV453) continue;
+                        if (lastGestureEndAt > 0L && now - lastGestureEndAt < 120L) continue;
+
                         if (now <= syntheticInputIgnoreUntilV411
-                                && now - lastSyntheticInputAtV411 <= 500L) {
-                            diagnostic("[人工检测V4.47.2] 忽略程序 input tap/swipe 的触摸尾事件，delta="
-                                    + Math.max(0L, now - lastSyntheticInputAtV411) + "ms");
+                                && now - lastSyntheticInputAtV411 <= 1500L) {
+                            diagnostic("[学习真人V4.50] 忽略程序合成触摸尾事件");
                             continue;
                         }
 
-                        physicalTouchDetected = true;
-                        physicalTouchAt = now;
-                        if (!userAborted) {
-                            markUserAbortV48("检测到真实手指触摸屏幕");
-                            diagnostic("[人工检测] 已停止自动化；不记录、不学习、不回放真人手势");
+                        boolean standalone = standaloneHumanLearningV450;
+                        if (standalone) {
+                            // Privacy guard: never collect touches from launcher, settings,
+                            // lock screen, password fields, or any app other than Xianyu.
+                            String fg = getFg(suPath, false);
+                            if (!TARGET_PACKAGE.equals(fg)) {
+                                gestureShouldLearn = false;
+                                diagnostic("[学习真人V4.50] 非闲鱼前台，不记录本次触摸：" + fg);
+                                continue;
+                            }
+                        } else {
+                            physicalTouchDetected = true;
+                            physicalTouchAt = now;
+                            if (!userAborted) {
+                                markUserAbortV48("检测到真实手指触摸屏幕");
+                            }
                         }
 
-                        // Takeover is terminal for this monitor session. Do not wait
-                        // for TOUCH_UP and do not feed the gesture into any experience
-                        // store. The service/finally path will dispose the reader.
-                        break;
+                        gestureActive = true;
+                        gestureShouldLearn = standaloneHumanLearningV450 || userAborted;
+                        downAt = now;
+                        pendingWaitMs = lastGestureEndAt > 0L
+                                ? Math.max(0L, now - lastGestureEndAt)
+                                : 0L;
+                        startX = x == null ? lastX : x;
+                        startY = y == null ? lastY : y;
+                        lastX = startX;
+                        lastY = startY;
+                        trajectory.clear();
+                        if (gestureShouldLearn && startX >= 0 && startY >= 0) {
+                            appendGesturePointTimedV450(trajectory, startX, startY, 0);
+                        }
+
+                        if (!standaloneHumanLearningV450 && userAborted) {
+                            startHumanOperationTeachingV467();
+                            startHumanTeachingCaptureV464();
+                            diagnostic("[学习真人V4.50] 自动化已硬停止，转入90秒真人操作学习");
+                        }
+                        continue;
                     }
 
                     if (gestureActive && touchUp) {
                         int endX = x == null ? lastX : x;
                         int endY = y == null ? lastY : y;
-                        if (startX >= 0 && startY >= 0 && endX >= 0 && endY >= 0
+                        int duration = (int) Math.max(1L, now - downAt);
+
+                        if (gestureShouldLearn
+                                && startX >= 0 && startY >= 0
+                                && endX >= 0 && endY >= 0
                                 && endX < screenW && endY < screenH
                                 && startX < screenW && startY < screenH) {
+
+                            appendGesturePointTimedV450(trajectory, endX, endY, duration);
                             if (pendingWaitMs > 0L) {
-                                try {
-                                    HumanOperationExperienceStore.recordWait(
-                                            lastContext,
-                                            TeachingOutcomeStore.currentTask(),
-                                            TeachingOutcomeStore.currentScene(),
-                                            pendingWaitMs);
-                                    diagnostic("[真人经验V4.69] 已记录 WAIT：" + pendingWaitMs + "ms");
-                                } catch (Throwable t) {
-                                    diagnostic("[真人经验V4.69] WAIT记录失败，但继续监听：" + t);
-                                }
+                                HumanGestureStyleStore.recordWait(lastContext, pendingWaitMs);
                             }
-                            int duration = (int) Math.max(0L, now - downAt);
-                            double directDistance = Math.hypot(endX - startX, endY - startY);
-                            double angle = Math.toDegrees(Math.atan2(endY - startY, endX - startX));
-                            try {
-                                if (directDistance < 30.0 && duration < 450) {
-                                    HumanOperationExperienceStore.recordRawTap(
-                                            lastContext,
-                                            TeachingOutcomeStore.currentTask(),
-                                            TeachingOutcomeStore.currentScene(),
-                                            endX, endY, screenW, screenH);
-                                    diagnostic("[真人经验V4.68] 已记录 TAP：" + endX + "," + endY
-                                            + " duration=" + duration + "ms");
-                                } else {
-                                    appendGesturePointV472(trajectory, endX, endY);
-                                    SwipeCurveMetricsV472 curve =
-                                            calculateSwipeCurveMetricsV472(
-                                                    startX, startY, endX, endY, trajectory);
-                                    float effectivePath = Math.max(
-                                            curve.pathDistance, (float) directDistance);
-                                    float speed = duration <= 0 ? 0f
-                                            : effectivePath * 1000f / duration;
-                                    HumanOperationExperienceStore.recordSwipe(
-                                            lastContext,
-                                            TeachingOutcomeStore.currentTask(),
-                                            TeachingOutcomeStore.currentScene(),
-                                            startX, startY, endX, endY,
-                                            duration, effectivePath, (float) angle, speed,
-                                            curve.curvatureRad, curve.maxDeviation,
-                                            curve.pathRatio, trajectory,
-                                            screenW, screenH);
-                                    diagnostic("[真人经验V4.72] 已记录 SWIPE："
-                                            + startX + "," + startY + "→" + endX + "," + endY
-                                            + " duration=" + duration + "ms path=" + effectivePath
-                                            + " angle=" + angle + " curveRad=" + curve.curvatureRad
-                                            + " maxDev=" + curve.maxDeviation
-                                            + " pathRatio=" + curve.pathRatio
-                                            + " points=" + trajectory.size());
-                                }
-                            } catch (Throwable t) {
-                                diagnostic("[真人经验V4.68] 手势记录失败，但继续监听：" + t);
+
+                            double directDistance =
+                                    Math.hypot(endX - startX, endY - startY);
+
+                            if (directDistance < 30.0 && duration < 650) {
+                                HumanGestureStyleStore.recordTap(
+                                        lastContext,
+                                        duration,
+                                        screenW,
+                                        screenH,
+                                        trajectory
+                                );
+                                diagnostic("[学习真人V4.50] TAP "
+                                        + endX + "," + endY
+                                        + " hold=" + duration + "ms"
+                                        + " points=" + trajectory.size());
+                            } else {
+                                SwipeCurveMetricsV472 curve =
+                                        calculateSwipeCurveMetricsV472(
+                                                startX, startY, endX, endY, trajectory);
+                                HumanGestureStyleStore.recordSwipe(
+                                        lastContext,
+                                        duration,
+                                        screenW,
+                                        screenH,
+                                        trajectory
+                                );
+                                diagnostic("[学习真人V4.50] SWIPE "
+                                        + startX + "," + startY
+                                        + "→" + endX + "," + endY
+                                        + " duration=" + duration + "ms"
+                                        + " curveRad=" + curve.curvatureRad
+                                        + " maxDev=" + curve.maxDeviation
+                                        + " pathRatio=" + curve.pathRatio
+                                        + " points=" + trajectory.size());
                             }
+
                             lastGestureEndAt = now;
-                        } else {
-                            diagnostic("[人工检测V4.70] 收到抬起事件，但坐标未形成有效屏幕范围，丢弃本次手势");
                         }
+
                         gestureActive = false;
+                        gestureShouldLearn = false;
                         pendingWaitMs = 0L;
                         startX = startY = lastX = lastY = -1;
-                        pathDistance = 0f;
                         trajectory.clear();
                     }
 
-                    // Before takeover the old behavior remains immediate. After takeover
-                    // we intentionally keep this reader alive for the teaching window so
-                    // subsequent human gestures can be recorded.
+                    if (standaloneHumanLearningV450) {
+                        continue;
+                    }
                     if (!userAborted && !running) break;
                     if (userAborted && !isHumanTeachingActiveV466()) {
-                        diagnostic("[人工检测V4.70] 真人教学已结束，退出触摸监听");
+                        diagnostic("[学习真人V4.50] 真人学习窗口已结束，退出触摸监听");
                         break;
                     }
                 }
             } catch (Throwable t) {
-                if (running || userAborted) {
-                    diagnostic("[人工检测V4.67] 触摸经验监听退出：" + t);
+                if (running || userAborted || standaloneHumanLearningV450) {
+                    diagnostic("[学习真人V4.50] 触摸监听退出：" + t);
                 }
             } finally {
                 if (process != null) {
                     try { process.destroy(); } catch (Throwable ignored) { }
                 }
+                if (standaloneHumanLearningV450
+                        && touchMonitorThread == Thread.currentThread()) {
+                    standaloneHumanLearningV450 = false;
+                }
             }
-        }, "XianyuTouchGuard-V411");
+        }, "XianyuHumanGestureLearning-V450");
 
         thread.setDaemon(true);
         touchMonitorThread = thread;
         thread.start();
+    }
+
+    private static void appendGesturePointTimedV450(
+            List<int[]> points,
+            int x,
+            int y,
+            int elapsedMs
+    ) {
+        if (points == null || x < 0 || y < 0) return;
+        if (!points.isEmpty()) {
+            int[] last = points.get(points.size() - 1);
+            if (last != null && last.length >= 3
+                    && last[0] == x && last[1] == y
+                    && Math.abs(last[2] - elapsedMs) < 8) {
+                return;
+            }
+        }
+        final int maxPoints = 64;
+        int[] value = new int[]{x, y, Math.max(0, elapsedMs)};
+        if (points.size() < maxPoints) {
+            points.add(value);
+        } else {
+            // Keep the first and last samples; refresh interior points so long,
+            // curved swipes retain their shape instead of collapsing to endpoints.
+            int index = 1 + (Math.abs(elapsedMs / 7) % (maxPoints - 2));
+            points.set(index, value);
+        }
     }
 
     private static void appendGesturePointV472(List<int[]> points, int x, int y) {
