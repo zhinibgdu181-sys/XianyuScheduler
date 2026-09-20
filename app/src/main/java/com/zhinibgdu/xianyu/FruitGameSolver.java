@@ -71,6 +71,12 @@ public final class FruitGameSolver {
 
     private static final long MAX_ROUND_MS = 120_000L;
     private static final long UI_PROBE_INTERVAL_MS = 900L;
+    /**
+     * The game shows its own idle ad/reward layer after a period without input.
+     * This is a watchdog threshold, not a reason to synthesize arbitrary taps.
+     * The solver should re-observe/replan instead of deliberately waiting.
+     */
+    private static final long MAX_IDLE_BETWEEN_ACTIONS_MS = 2_200L;
     private static final int MAX_NO_PROGRESS = 4;
 
     private FruitGameSolver() {}
@@ -82,6 +88,7 @@ public final class FruitGameSolver {
 
         long deadline = System.currentTimeMillis() + MAX_ROUND_MS;
         long nextUiProbe = 0L;
+        long lastActionAt = System.currentTimeMillis();
         int noProgress = 0;
         int replanCount = 0;
         FruitBoardState current = null;
@@ -91,6 +98,15 @@ public final class FruitGameSolver {
 
         while (!host.aborted() && System.currentTimeMillis() < deadline) {
             long now = System.currentTimeMillis();
+
+            // Never intentionally leave the game idle. If recognition/planning
+            // has taken too long without an input, immediately re-observe rather
+            // than adding another sleep that could trigger the game's idle ad.
+            if (now - lastActionAt > MAX_IDLE_BETWEEN_ACTIONS_MS) {
+                host.log("[水果防空闲] 已超过" + MAX_IDLE_BETWEEN_ACTIONS_MS
+                        + "ms没有有效操作；跳过等待，立即重新截图/规划");
+                nextUiProbe = 0L;
+            }
 
             if (now >= nextUiProbe) {
                 UiDecision ui = probeUi(host);
@@ -258,12 +274,14 @@ public final class FruitGameSolver {
                     break;
                 }
 
+                lastActionAt = System.currentTimeMillis();
+
                 if (click.reason.equals("PAIR_FIRST")) {
-                    if (!host.sleep(130L, 180L)) return Result.ABORTED;
+                    if (!host.sleep(90L, 140L)) return Result.ABORTED;
                     continue;
                 }
 
-                if (!host.sleep(180L, 260L)) return Result.ABORTED;
+                if (!host.sleep(120L, 190L)) return Result.ABORTED;
 
                 // UNLOCK is intentionally a one-click route. It must be
                 // re-observed before another action is allowed.
