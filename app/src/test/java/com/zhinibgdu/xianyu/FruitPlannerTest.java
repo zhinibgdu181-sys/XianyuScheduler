@@ -94,4 +94,23 @@ public class FruitPlannerTest {
         ));
     }
 
+
+    @Test
+    public void trayMatchUsesSingleBoardTap() {
+        FruitBoardState.Fruit pending = fruit(540, 1850, 240, 210, 40, 50);
+        FruitBoardState.Fruit mate = fruit(760, 1180, 241, 209, 42, 51);
+        FruitBoardState.Fruit other = fruit(250, 900, 70, 80, 230, 220);
+
+        FruitBoardState state = new FruitBoardState(
+                1080, 2400,
+                Arrays.asList(mate, other),
+                Arrays.asList(pending)
+        );
+
+        FruitPlanner.Plan plan = FruitPlanner.plan(state);
+        assertFalse(plan.isEmpty());
+        assertTrue(plan.clicks.size() == 1);
+        assertTrue("TRAY_MATCH".equals(plan.clicks.get(0).reason));
+    }
+
 }
