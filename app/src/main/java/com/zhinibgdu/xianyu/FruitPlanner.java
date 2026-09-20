@@ -19,6 +19,7 @@ final class FruitPlanner {
     private static final double PAIR_MAX_DISTANCE = 0.30;
     private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.17;
     private static final double PAIR_AMBIGUITY_MARGIN = 0.006;
+    private static final double PAIR_RESCUE_MAX_DISTANCE = 0.65;
     private static final int MAX_SEARCH_DEPTH = 14;
     private static final long SEARCH_BUDGET_MS = 220L;
 
@@ -29,6 +30,11 @@ final class FruitPlanner {
 
         long deadline = System.nanoTime() + SEARCH_BUDGET_MS * 1_000_000L;
         List<Move> rootMoves = generateMoves(state);
+        boolean rescue = false;
+        if (rootMoves.isEmpty()) {
+            rootMoves = generateNearestNeighborRescueMoves(state);
+            rescue = !rootMoves.isEmpty();
+        }
 
         if (!rootMoves.isEmpty()) {
             SearchResult best = new SearchResult();
@@ -46,7 +52,9 @@ final class FruitPlanner {
                 return new Plan(
                         clicks,
                         best.score,
-                        "候选配对=" + rootMoves.size() + "，执行最高分配对后立即验证"
+                        (rescue ? "常规配对为0，启动最近邻救援=" : "候选配对=")
+                                + rootMoves.size()
+                                + "，执行一组后立即验证"
                 );
             }
         }
@@ -235,6 +243,67 @@ final class FruitPlanner {
                 ));
             }
         }
+        return result;
+    }
+
+    /**
+     * Last-resort identity bridge. The normal identity gate is intentionally
+     * conservative, but a completely empty move list must not leave the game
+     * idle forever. Choose only the nearest visual neighbour of each fruit;
+     * prefer reciprocal neighbours and cap the distance. The solver verifies
+     * the resulting transition immediately, so a bad hypothesis is discarded.
+     */
+    private static List<Move> generateNearestNeighborRescueMoves(FruitBoardState state) {
+        List<Move> reciprocal = new ArrayList<>();
+        List<Move> oneWay = new ArrayList<>();
+        int n = state.boardFruits.size();
+        if (n < 2) return reciprocal;
+
+        int[] bestIndex = new int[n];
+        double[] bestDistance = new double[n];
+        java.util.Arrays.fill(bestIndex, -1);
+        java.util.Arrays.fill(bestDistance, Double.MAX_VALUE);
+
+        for (int i = 0; i < n; i++) {
+            FruitBoardState.Fruit a = state.boardFruits.get(i);
+            for (int j = 0; j < n; j++) {
+                if (i == j) continue;
+                double d = a.similarityDistance(state.boardFruits.get(j));
+                if (d < bestDistance[i]) {
+                    bestDistance[i] = d;
+                    bestIndex[i] = j;
+                }
+            }
+        }
+
+        Set<String> added = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            int j = bestIndex[i];
+            if (j < 0 || bestDistance[i] > PAIR_RESCUE_MAX_DISTANCE) continue;
+            int a = Math.min(i, j);
+            int b = Math.max(i, j);
+            String key = a + ":" + b;
+            if (!added.add(key)) continue;
+
+            FruitBoardState.Fruit fa = state.boardFruits.get(a);
+            FruitBoardState.Fruit fb = state.boardFruits.get(b);
+            double d = fa.similarityDistance(fb);
+            double access = 0.24 * (clickability(state, fa) + clickability(state, fb));
+            double score = Math.max(0.0, 1.0 - d / PAIR_RESCUE_MAX_DISTANCE)
+                    + access
+                    + (bestIndex[j] == i ? 0.20 : 0.0);
+            Move move = new Move(
+                    a, b,
+                    fa.centerX, fa.centerY,
+                    fb.centerX, fb.centerY,
+                    score
+            );
+            if (bestIndex[j] == i) reciprocal.add(move);
+            else oneWay.add(move);
+        }
+
+        List<Move> result = reciprocal.isEmpty() ? oneWay : reciprocal;
+        result.sort((a, b) -> Double.compare(b.score, a.score));
         return result;
     }
 
