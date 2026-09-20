@@ -20,10 +20,16 @@ final class GameTapPolicy {
         if ("水果游戏-关闭道具弹窗".equals(reason)
                 || (reason != null && reason.startsWith("水果游戏-继续关闭道具弹窗")))
             return nx >= 1160.0/1440 && nx <= 1325.0/1440 && ny >= 740.0/3120 && ny <= 960.0/3120;
-        // V4.87 full-board planner actions. These are still subject to the same
-        // board-coordinate safety gate; do not turn the whitelist into an unrestricted tap path.
-        if (!"水果游戏-V4.87-BOARD_PUSH".equals(reason)
-                && !"水果游戏-V4.87-TRAY_MATCH".equals(reason)) return false;
-        return ny >= .115 && ny <= .625;
+        // Clean fruit solver route actions. Keep them strictly inside the
+        // detected board region; do not let a planner turn the whitelist into
+        // an unrestricted screen tap path.
+        if ("PAIR_FIRST".equals(reason)
+                || "PAIR_SECOND".equals(reason)
+                || "UNLOCK".equals(reason)
+                || "水果游戏-V4.87-BOARD_PUSH".equals(reason)
+                || "水果游戏-V4.87-TRAY_MATCH".equals(reason)) {
+            return ny >= .16 && ny <= .82;
+        }
+        return false;
     }
 }
