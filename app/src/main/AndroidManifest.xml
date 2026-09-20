@@ -46,5 +46,14 @@
                 android:value="user-configured on-device automation task coordinator" />
         </service>
 
+        <service
+            android:name=".HumanLearningForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="user-started passive on-device touch gesture learning for Xianyu" />
+        </service>
+
     </application>
 </manifest>
