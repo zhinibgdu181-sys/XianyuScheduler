@@ -43,7 +43,8 @@ final class GameTapPolicy {
                 || "水果游戏-V4.87-TRAY_MATCH".equals(reason)) {
             return ny >= .00 && ny <= .61;
         }
-        if ("IDLE_KEEPALIVE".equals(reason)) {
+        if ("IDLE_KEEPALIVE".equals(reason)
+                || "IDLE_BLANK_SWIPE".equals(reason)) {
             return nx >= .08 && nx <= .92 && ny >= .08 && ny <= .58;
         }
         return false;
