@@ -333,11 +333,15 @@ public final class FruitGameSolver {
                 lastActionAt = System.currentTimeMillis();
 
                 if (click.reason.equals("PAIR_FIRST")) {
-                    if (!host.sleep(90L, 140L)) return Result.ABORTED;
+                    // Give the first fruit time to leave its original cell. The
+                    // real recording shows a visible gravity/roof-roll phase;
+                    // the old 90ms gap often tapped the second fruit before the
+                    // first had opened its fall corridor.
+                    if (!host.sleep(420L, 620L)) return Result.ABORTED;
                     continue;
                 }
 
-                if (!host.sleep(120L, 190L)) return Result.ABORTED;
+                if (!host.sleep(420L, 650L)) return Result.ABORTED;
 
                 // UNLOCK is intentionally a one-click route. It must be
                 // re-observed before another action is allowed.
@@ -346,33 +350,12 @@ public final class FruitGameSolver {
                     break;
                 }
 
-                // PAIR_SECOND completes one predicted transition. Verify once per
-                // pair instead of after every individual fruit click.
-                Bitmap afterFrame = ScreenOcr.captureBitmap(
-                        context,
-                        suPath,
-                        () -> host.aborted()
-                );
-                if (afterFrame == null) {
-                    host.log("[水果验证] 路线截图失败，立即重新识别");
-                    routeBroken = true;
-                    break;
-                }
-
-                FruitBoardState after;
-                try {
-                    after = FruitVisionEngine.observe(afterFrame);
-                    if (after.width > 0 && after.height > 0) {
-                        host.onFrameSize(after.width, after.height);
-                    }
-                } finally {
-                    if (!afterFrame.isRecycled()) afterFrame.recycle();
-                }
-
-                int beforeCount = current.boardFruits.size();
-                int afterCount = after.boardFruits.size();
-                int structuralChange = current.fingerprintChangesAgainst(after);
-
+                /*
+                 * Let OCR run before the structural screenshot. OCR itself costs
+                 * enough time for the clicked fruit to finish falling/rolling.
+                 * The old code captured the "after" frame ~150ms after the tap,
+                 * while the real physics animation was still in progress.
+                 */
                 ScreenOcr.Snapshot afterActionOcr = host.ocr("水果配对后剩余数");
                 if (afterActionOcr != null && !afterActionOcr.isEmpty()) {
                     String afterText = afterActionOcr.fullText;
@@ -395,6 +378,31 @@ public final class FruitGameSolver {
                         afterActionOcr == null ? "" : afterActionOcr.fullText
                 );
 
+                Bitmap afterFrame = ScreenOcr.captureBitmap(
+                        context,
+                        suPath,
+                        () -> host.aborted()
+                );
+                if (afterFrame == null) {
+                    host.log("[水果验证] 稳定后截图失败，立即重新识别");
+                    routeBroken = true;
+                    break;
+                }
+
+                FruitBoardState after;
+                try {
+                    after = FruitVisionEngine.observe(afterFrame);
+                    if (after.width > 0 && after.height > 0) {
+                        host.onFrameSize(after.width, after.height);
+                    }
+                } finally {
+                    if (!afterFrame.isRecycled()) afterFrame.recycle();
+                }
+
+                int beforeCount = current.boardFruits.size();
+                int afterCount = after.boardFruits.size();
+                int structuralChange = current.fingerprintChangesAgainst(after);
+
                 /*
                  * A visual change alone is not enough. A wrong tap can move a
                  * fruit, open a tray, or trigger an animation and still produce
@@ -407,23 +415,48 @@ public final class FruitGameSolver {
                         remainingBeforeAction >= 0
                                 && remainingAfterAction >= 0
                                 && remainingAfterAction < remainingBeforeAction;
-                boolean clearBoardReduction = afterCount <= beforeCount - 2;
+                boolean pairBoardReduction =
+                        "PAIR_SECOND".equals(click.reason)
+                                && afterCount <= beforeCount - 2;
+                boolean trayMatchStructural =
+                        "TRAY_MATCH".equals(click.reason)
+                                && current.trayCount() > 0
+                                && after.trayCount() < current.trayCount()
+                                && afterCount <= beforeCount - 1;
 
-                if (remainingDropped || clearBoardReduction) {
-                    host.log("[水果验证] 配对确认成功："
-                            + "剩余=" + remainingBeforeAction + "->"
+                if (remainingDropped || pairBoardReduction || trayMatchStructural) {
+                    host.log("[水果验证] 动作确认成功："
+                            + click.reason
+                            + "，剩余=" + remainingBeforeAction + "->"
                             + remainingAfterAction
                             + "，识别对象=" + beforeCount + "->" + afterCount
+                            + "，槽位=" + current.trayCount() + "->" + after.trayCount()
                             + "，结构变化=" + structuralChange);
                     current = after;
                     noProgress = 0;
                     continue;
                 }
 
-                host.log("[水果验证] 点击后没有证据证明完成一组配对："
+                boolean oneFruitEnteredCollector =
+                        "PAIR_SECOND".equals(click.reason)
+                                && (afterCount == beforeCount - 1
+                                || after.trayCount() > current.trayCount());
+                if (oneFruitEnteredCollector) {
+                    host.log("[水果验证] 本组只确认1个水果进入槽位；"
+                            + "不判失败，下一轮优先寻找槽内同类。"
+                            + " 对象=" + beforeCount + "->" + afterCount
+                            + " 槽位=" + current.trayCount() + "->" + after.trayCount());
+                    current = after;
+                    routeBroken = true;
+                    noProgress = 0;
+                    break;
+                }
+
+                host.log("[水果验证] 点击后没有证据证明消除/入槽："
                         + "剩余=" + remainingBeforeAction + "->"
                         + remainingAfterAction
                         + "，对象=" + beforeCount + "->" + afterCount
+                        + "，槽位=" + current.trayCount() + "->" + after.trayCount()
                         + "；立即废弃路线并重新识别");
                 routeBroken = true;
                 noProgress++;

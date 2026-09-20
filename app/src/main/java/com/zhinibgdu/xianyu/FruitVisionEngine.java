@@ -25,10 +25,13 @@ final class FruitVisionEngine {
     // top fruits and treated lower UI/decorations as tray contents.
     private static final float BOARD_TOP = 0.00f;
     private static final float BOARD_BOTTOM = 0.60f;
-    private static final float TRAY_TOP = 0.60f;
-    private static final float TRAY_BOTTOM = 0.70f;
-    private static final float TRAY_LEFT = 0.30f;
-    private static final float TRAY_RIGHT = 0.70f;
+    // Central collector only. In the real recording, a pending fruit sits in
+    // the narrow gap between the roofs around y=0.72..0.82. Restricting both
+    // axes avoids the old false tray=4 caused by roofs/buttons/decorations.
+    private static final float TRAY_TOP = 0.70f;
+    private static final float TRAY_BOTTOM = 0.82f;
+    private static final float TRAY_LEFT = 0.40f;
+    private static final float TRAY_RIGHT = 0.60f;
 
     private FruitVisionEngine() {}
 
@@ -48,14 +51,33 @@ final class FruitVisionEngine {
                 5000
         );
 
-        /*
-         * Disable tray occupancy as a planning input until the collector can be
-         * segmented independently from roof/decorative sprites. Real 4.45.0
-         * logs reported tray=4 on a fresh board, which was demonstrably false.
-         * False occupancy is more dangerous than unknown occupancy because it
-         * can suppress otherwise valid moves.
-         */
+        List<FruitBoardState.Fruit> trayRaw = detectRegion(
+                source,
+                Math.round(source.getHeight() * TRAY_TOP),
+                Math.round(source.getHeight() * TRAY_BOTTOM),
+                4,
+                2200
+        );
         List<FruitBoardState.Fruit> tray = new ArrayList<>();
+        int trayLeft = Math.round(source.getWidth() * TRAY_LEFT);
+        int trayRight = Math.round(source.getWidth() * TRAY_RIGHT);
+        int minDim = Math.max(24, Math.round(source.getWidth() * 0.025f));
+        int maxDim = Math.max(130, Math.round(source.getWidth() * 0.18f));
+
+        for (FruitBoardState.Fruit fruit : trayRaw) {
+            if (fruit.centerX < trayLeft || fruit.centerX > trayRight) continue;
+            if (fruit.width() < minDim || fruit.height() < minDim) continue;
+            if (fruit.width() > maxDim || fruit.height() > maxDim) continue;
+            if (fruit.saturation < 0.22f) continue;
+            tray.add(fruit);
+        }
+
+        // The collector is tiny. More than four detected objects here almost
+        // certainly means the roof/wall was segmented; reject the whole tray
+        // rather than poisoning the planner with false occupancy.
+        if (tray.size() > 4) {
+            tray.clear();
+        }
 
         return new FruitBoardState(
                 source.getWidth(),
