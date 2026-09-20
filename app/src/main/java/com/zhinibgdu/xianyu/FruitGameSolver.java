@@ -77,7 +77,7 @@ public final class FruitGameSolver {
      * The solver should re-observe/replan instead of deliberately waiting.
      */
     private static final long MAX_IDLE_BETWEEN_ACTIONS_MS = 2_200L;
-    private static final int MAX_NO_PROGRESS = 4;
+    private static final int MAX_NO_PROGRESS = 2;
 
     private FruitGameSolver() {}
 
@@ -227,7 +227,7 @@ public final class FruitGameSolver {
                     host.log("[水果新求解器] 连续无安全动作，结束本轮并保留现场");
                     return Result.SAFE_STOP_DIRTY;
                 }
-                host.sleep(90L, 140L);
+                host.sleep(60L, 100L);
                 continue;
             }
 
