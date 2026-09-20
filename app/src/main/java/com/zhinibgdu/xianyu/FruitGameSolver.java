@@ -3,7 +3,9 @@ package com.zhinibgdu.xianyu;
 import android.content.Context;
 import android.graphics.Bitmap;
 
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Clean fruit-game solver.
@@ -69,7 +71,7 @@ public final class FruitGameSolver {
         }
     }
 
-    private static final long MAX_ROUND_MS = 120_000L;
+    private static final long MAX_ROUND_MS = 10L * 60_000L;
     private static final long UI_PROBE_INTERVAL_MS = 900L;
     /**
      * The game shows its own idle ad/reward layer after a period without input.
@@ -92,6 +94,7 @@ public final class FruitGameSolver {
         int noProgress = 0;
         int replanCount = 0;
         FruitBoardState current = null;
+        Set<String> failedActionKeys = new HashSet<>();
 
         host.log("[水果新求解器] 开始：完整截图→识别→搜索→执行→验证");
         host.log("[水果新求解器] 不继承旧 FruitGameSolver 的局部决策链");
@@ -119,6 +122,7 @@ public final class FruitGameSolver {
                     // fruit vision against the stale modal image.
                     replanCount++;
                     noProgress = 0;
+                    failedActionKeys.clear();
                     host.sleep(220L, 360L);
                     continue;
                 }
@@ -205,7 +209,7 @@ public final class FruitGameSolver {
             }
 
             host.log("[水果识别诊断] " + FruitPlanner.diagnosticSummary(current));
-            FruitPlanner.Plan plan = FruitPlanner.plan(current);
+            FruitPlanner.Plan plan = FruitPlanner.plan(current, failedActionKeys);
             host.log(String.format(
                     Locale.US,
                     "[水果搜索] R=%d T=%d 路线点击=%d score=%.3f reason=%s",
@@ -370,13 +374,38 @@ public final class FruitGameSolver {
                         host.log("[水果页面守卫] 点击后出现弹窗/开始页，废弃视觉结果并重新处理UI");
                         routeBroken = true;
                         noProgress = 0;
+                        failedActionKeys.clear();
                         nextUiProbe = 0L;
                         break;
                     }
                 }
+
                 int remainingAfterAction = extractRemainingCount(
                         afterActionOcr == null ? "" : afterActionOcr.fullText
                 );
+                boolean remainingReadable =
+                        remainingBeforeAction >= 0 && remainingAfterAction >= 0;
+                boolean remainingDropped =
+                        remainingReadable && remainingAfterAction < remainingBeforeAction;
+
+                /*
+                 * Remaining-count OCR is authoritative when both readings are
+                 * available. The 4.45.2 log exposed a false success where an
+                 * "解锁所有槽位" modal reduced the number of visible objects from
+                 * 33 to 24 while the counter stayed 202. Never let structural
+                 * change override an unchanged readable counter.
+                 */
+                if (remainingDropped) {
+                    host.log("[水果验证] 计数器确认消除成功："
+                            + click.reason
+                            + "，剩余=" + remainingBeforeAction + "->"
+                            + remainingAfterAction);
+                    failedActionKeys.clear();
+                    noProgress = 0;
+                    routeBroken = true;
+                    current = null;
+                    break;
+                }
 
                 Bitmap afterFrame = ScreenOcr.captureBitmap(
                         context,
@@ -402,62 +431,66 @@ public final class FruitGameSolver {
                 int beforeCount = current.boardFruits.size();
                 int afterCount = after.boardFruits.size();
                 int structuralChange = current.fingerprintChangesAgainst(after);
+                int objectDelta = afterCount - beforeCount;
+                boolean plausibleStructuralDelta = Math.abs(objectDelta) <= 4;
 
-                /*
-                 * A visual change alone is not enough. A wrong tap can move a
-                 * fruit, open a tray, or trigger an animation and still produce
-                 * a different screenshot. For this game the strongest observable
-                 * proof of a successful pair is that the "剩余" counter drops.
-                 * If OCR is unavailable, require a clear two-object reduction
-                 * instead of accepting a one-pixel/one-object vision jitter.
-                 */
-                boolean remainingDropped =
-                        remainingBeforeAction >= 0
-                                && remainingAfterAction >= 0
-                                && remainingAfterAction < remainingBeforeAction;
+                // Structural pair completion is only a fallback when the OCR
+                // counter is unavailable. Exact -2..-4 reductions are accepted;
+                // large collapses are treated as overlays/modals, not gameplay.
                 boolean pairBoardReduction =
-                        "PAIR_SECOND".equals(click.reason)
+                        !remainingReadable
+                                && "PAIR_SECOND".equals(click.reason)
+                                && plausibleStructuralDelta
                                 && afterCount <= beforeCount - 2;
                 boolean trayMatchStructural =
-                        "TRAY_MATCH".equals(click.reason)
+                        !remainingReadable
+                                && "TRAY_MATCH".equals(click.reason)
+                                && plausibleStructuralDelta
                                 && current.trayCount() > 0
                                 && after.trayCount() < current.trayCount()
                                 && afterCount <= beforeCount - 1;
 
-                if (remainingDropped || pairBoardReduction || trayMatchStructural) {
-                    host.log("[水果验证] 动作确认成功："
+                if (pairBoardReduction || trayMatchStructural) {
+                    host.log("[水果验证] OCR不可用，结构确认动作成功："
                             + click.reason
-                            + "，剩余=" + remainingBeforeAction + "->"
-                            + remainingAfterAction
                             + "，识别对象=" + beforeCount + "->" + afterCount
                             + "，槽位=" + current.trayCount() + "->" + after.trayCount()
                             + "，结构变化=" + structuralChange);
                     current = after;
+                    failedActionKeys.clear();
                     noProgress = 0;
                     continue;
                 }
 
                 boolean oneFruitEnteredCollector =
-                        "PAIR_SECOND".equals(click.reason)
+                        plausibleStructuralDelta
+                                && ("PAIR_SECOND".equals(click.reason)
+                                || "TRAY_MATCH".equals(click.reason))
                                 && (afterCount == beforeCount - 1
-                                || after.trayCount() > current.trayCount());
+                                || after.trayCount() == current.trayCount() + 1);
                 if (oneFruitEnteredCollector) {
-                    host.log("[水果验证] 本组只确认1个水果进入槽位；"
+                    host.log("[水果验证] 只确认1个水果进入槽位；"
                             + "不判失败，下一轮优先寻找槽内同类。"
                             + " 对象=" + beforeCount + "->" + afterCount
                             + " 槽位=" + current.trayCount() + "->" + after.trayCount());
                     current = after;
+                    failedActionKeys.clear();
                     routeBroken = true;
                     noProgress = 0;
                     break;
                 }
 
+                String failedKey = plan.actionKey();
+                if (!failedKey.isEmpty()) {
+                    failedActionKeys.add(failedKey);
+                    host.log("[水果候选黑名单] 当前局面暂时排除无效动作：" + failedKey);
+                }
                 host.log("[水果验证] 点击后没有证据证明消除/入槽："
                         + "剩余=" + remainingBeforeAction + "->"
                         + remainingAfterAction
                         + "，对象=" + beforeCount + "->" + afterCount
                         + "，槽位=" + current.trayCount() + "->" + after.trayCount()
-                        + "；立即废弃路线并重新识别");
+                        + "；废弃本候选并改选其他动作");
                 routeBroken = true;
                 noProgress++;
                 break;
@@ -524,12 +557,17 @@ public final class FruitGameSolver {
     public static boolean looksLikeFruitGame(String text) {
         if (text == null) return false;
         String normalized = text.replace(" ", "");
-        return normalized.contains("水果")
+        boolean explicit = normalized.contains("水果")
                 || normalized.contains("二消")
                 || normalized.contains("去消了还想消")
                 || normalized.contains("果盘")
                 || normalized.contains("槽位")
                 || normalized.contains("消除水果");
+        boolean versionedBoard = normalized.contains("VERSION")
+                && containsAny(normalized, "剩余", "剩小")
+                && normalized.contains("消除")
+                && normalized.contains("打乱");
+        return explicit || versionedBoard;
     }
 
     public static boolean looksLikeFruitStartScreen(String text) {
@@ -583,6 +621,7 @@ public final class FruitGameSolver {
 
     public static boolean looksLikeBlockingFunctionPopupText(String text) {
         if (text == null) return false;
+        if (looksLikeRewardToolPopup(text)) return true;
         // Normal board controls such as "打乱" and "消除" are not popup evidence.
         // Require explicit modal/confirmation language before attempting a close.
         return containsAny(text,
@@ -590,6 +629,17 @@ public final class FruitGameSolver {
                 "购买道具", "道具已获得", "确定", "取消", "关闭", "知道了",
                 "广告", "广告加载", "跳过广告", "激励视频", "道具弹窗",
                 "再试一次", "再来一次");
+    }
+
+    private static boolean looksLikeRewardToolPopup(String text) {
+        if (text == null) return false;
+        String normalized = text.replace(" ", "");
+        boolean unlock = containsAny(normalized,
+                "解锁所有槽位", "解锁所有檀位", "解锁所有槽");
+        boolean eliminate = containsAny(normalized,
+                "开局消除多组水果", "开局消除多組水果");
+        return (unlock || eliminate)
+                && containsAny(normalized, "使用", "视频", "廣告", "广告");
     }
 
     public static boolean isBlockedPosition(int x, int y, int width, int height) {
@@ -714,9 +764,27 @@ public final class FruitGameSolver {
             return UiDecision.NONE;
         }
 
+        if (looksLikeRewardToolPopup(text)) {
+            ScreenOcr.Item close = findToolModalCloseCandidate(snapshot);
+            int closeX = close != null
+                    ? close.centerX() : Math.round(snapshot.width * 0.667f);
+            int closeY = close != null
+                    ? close.centerY() : Math.round(snapshot.height * 0.219f);
+
+            if (GameTapPolicy.allows(
+                    closeX, closeY, snapshot.width, snapshot.height,
+                    "FRUIT_TOOL_MODAL_CLOSE")
+                    && host.tap(closeX, closeY, "FRUIT_TOOL_MODAL_CLOSE")) {
+                host.log("[水果弹窗] 已关闭奖励道具弹窗；不点击视频/使用按钮");
+                return UiDecision.POPUP_CLOSED;
+            }
+
+            host.log("[水果弹窗] 已识别奖励道具弹窗，但关闭坐标未通过安全白名单");
+            return UiDecision.NONE;
+        }
+
         boolean popupEvidence = looksLikeBlockingFunctionPopupText(text)
-                || containsAny(text, "开局消除多组水果", "开局消除多組水果",
-                "购买道具", "道具已获得", "广告加载", "激励视频");
+                || containsAny(text, "购买道具", "道具已获得", "广告加载", "激励视频");
         if (popupEvidence) {
             ScreenOcr.Item close = findCloseCandidate(snapshot);
             if (close != null) {
@@ -763,6 +831,33 @@ public final class FruitGameSolver {
                     && item.centerX() < snapshot.width * 0.82) score += 30;
             if (item.centerY() > snapshot.height * 0.35
                     && item.centerY() < snapshot.height * 0.92) score += 30;
+            if (score > bestScore) {
+                bestScore = score;
+                best = item;
+            }
+        }
+        return best;
+    }
+
+    private static ScreenOcr.Item findToolModalCloseCandidate(
+            ScreenOcr.Snapshot snapshot
+    ) {
+        ScreenOcr.Item best = null;
+        int bestScore = Integer.MIN_VALUE;
+        for (ScreenOcr.Item item : snapshot.items) {
+            String t = item.text == null ? "" : item.text.trim();
+            boolean explicitClose = t.contains("×")
+                    || t.equalsIgnoreCase("x")
+                    || t.contains("关闭");
+            if (!explicitClose) continue;
+
+            double nx = item.centerX() / (double) Math.max(1, snapshot.width);
+            double ny = item.centerY() / (double) Math.max(1, snapshot.height);
+            if (nx < .58 || nx > .76 || ny < .16 || ny > .30) continue;
+
+            int score = 100
+                    - (int) (Math.abs(nx - .667) * 300)
+                    - (int) (Math.abs(ny - .219) * 300);
             if (score > bestScore) {
                 bestScore = score;
                 best = item;
