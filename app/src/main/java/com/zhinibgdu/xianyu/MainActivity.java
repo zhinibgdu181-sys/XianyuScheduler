@@ -288,7 +288,13 @@ public class MainActivity extends Activity {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < tasks.size(); i++) {
                 if (i > 0) sb.append('\n');
-                sb.append(i + 1).append(". ").append(tasks.get(i));
+                String entry = tasks.get(i);
+                sb.append(i + 1).append(". ").append(entry);
+                int taskCoins = TaskStatusReceiver.getConfirmedCoinRewardForTask(
+                        this, date, entry);
+                if (taskCoins > 0) {
+                    sb.append("  · +").append(taskCoins).append("闲鱼币");
+                }
             }
             if (coins == 0) {
                 sb.append("\n\n闲鱼币：当前没有可被程序明确确认的奖励数值，因此不猜测、不虚报。");
