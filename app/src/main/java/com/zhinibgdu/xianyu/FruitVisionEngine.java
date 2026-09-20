@@ -48,26 +48,14 @@ final class FruitVisionEngine {
                 5000
         );
 
-        List<FruitBoardState.Fruit> trayRaw = detectRegion(
-                source,
-                Math.round(source.getHeight() * TRAY_TOP),
-                Math.round(source.getHeight() * TRAY_BOTTOM),
-                5,
-                1800
-        );
+        /*
+         * Disable tray occupancy as a planning input until the collector can be
+         * segmented independently from roof/decorative sprites. Real 4.45.0
+         * logs reported tray=4 on a fresh board, which was demonstrably false.
+         * False occupancy is more dangerous than unknown occupancy because it
+         * can suppress otherwise valid moves.
+         */
         List<FruitBoardState.Fruit> tray = new ArrayList<>();
-        int trayLeft = Math.round(source.getWidth() * TRAY_LEFT);
-        int trayRight = Math.round(source.getWidth() * TRAY_RIGHT);
-        for (FruitBoardState.Fruit fruit : trayRaw) {
-            if (fruit.centerX >= trayLeft && fruit.centerX <= trayRight) {
-                tray.add(fruit);
-            }
-        }
-
-        if (tray.size() > 4) {
-            tray.sort((a, b) -> Integer.compare(b.pixelArea, a.pixelArea));
-            tray = new ArrayList<>(tray.subList(0, 4));
-        }
 
         return new FruitBoardState(
                 source.getWidth(),
