@@ -24,6 +24,11 @@ final class GameTapPolicy {
             return nx >= .78 && nx <= .98 && ny >= .02 && ny <= .35;
         if ("POPUP_CLOSE_TOP_RIGHT".equals(reason))
             return nx >= .84 && nx <= .99 && ny >= .02 && ny <= .18;
+        // Reward-tool modal ("解锁所有槽位" / "开局消除多组水果") is
+        // centered on the game. Only close its own X; never click the green
+        // video/"使用" button.
+        if ("FRUIT_TOOL_MODAL_CLOSE".equals(reason))
+            return nx >= .58 && nx <= .76 && ny >= .16 && ny <= .30;
         if ("FRUIT_UI_CONTINUE".equals(reason)
                 || "FRUIT_UI_REVIVE".equals(reason))
             return nx >= .15 && nx <= .85 && ny >= .35 && ny <= .92;

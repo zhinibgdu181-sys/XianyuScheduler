@@ -113,4 +113,43 @@ public class FruitPlannerTest {
         assertTrue("TRAY_MATCH".equals(plan.clicks.get(0).reason));
     }
 
+
+    @Test
+    public void unlockRewardPopupIsTreatedAsBlockingUi() {
+        assertTrue(FruitGameSolver.looksLikeBlockingFunctionPopupText(
+                "剩小 202 解锁 解锁所有檀位 D使用 打乱 2%"
+        ));
+    }
+
+    @Test
+    public void versionedLiveBoardIsRecognizedAsFruitGame() {
+        assertTrue(FruitGameSolver.looksLikeFruitGame(
+                "VERSION:1.0.2 d6f51 剩小 202 消除 第1关 打乱 2%"
+        ));
+    }
+
+    @Test
+    public void failedPairCanBeExcludedOnImmediateReplan() {
+        FruitBoardState state = new FruitBoardState(
+                1080, 2400,
+                Arrays.asList(
+                        fruit(180, 1300, 240, 70, 70, 0),
+                        fruit(420, 1320, 239, 71, 71, 0),
+                        fruit(680, 1340, 241, 69, 69, 0),
+                        fruit(900, 1360, 238, 72, 72, 1)
+                ),
+                null
+        );
+
+        FruitPlanner.Plan first = FruitPlanner.plan(state);
+        assertFalse(first.isEmpty());
+
+        java.util.Set<String> blocked = new java.util.HashSet<>();
+        blocked.add(first.actionKey());
+        FruitPlanner.Plan second = FruitPlanner.plan(state, blocked);
+
+        assertFalse(second.isEmpty());
+        assertTrue(!first.actionKey().equals(second.actionKey()));
+    }
+
 }

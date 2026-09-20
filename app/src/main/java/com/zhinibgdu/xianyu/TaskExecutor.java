@@ -5468,6 +5468,12 @@ public final class TaskExecutor {
         physicalTouchDevice = device;
         diagnostic("[人工检测] 监听物理触摸设备：" + device);
 
+        // The tap that starts a task can still be completing while getevent is
+        // being attached. Arm the takeover detector after a short grace window
+        // so that the launch finger-up/down tail is not misclassified as a new
+        // manual takeover.
+        final long monitorArmedAtV453 = SystemClock.elapsedRealtime() + 1200L;
+
         Thread thread = new Thread(() -> {
             Process process = null;
             int startX = -1, startY = -1, lastX = -1, lastY = -1;
@@ -5533,6 +5539,11 @@ public final class TaskExecutor {
                         // finger-down. Once a gesture is active, the second down is a
                         // duplicate event, not a new gesture.
                         if (gestureActive) continue;
+                        if (now < monitorArmedAtV453) {
+                            diagnostic("[人工检测V4.53] 忽略任务启动后触摸尾事件，armIn="
+                                    + Math.max(0L, monitorArmedAtV453 - now) + "ms");
+                            continue;
+                        }
                         if (lastGestureEndAt > 0L && now - lastGestureEndAt < 150L) {
                             diagnostic("[人工检测V4.69] 忽略结束后的重复DOWN，delta="
                                     + Math.max(0L, now - lastGestureEndAt) + "ms");
