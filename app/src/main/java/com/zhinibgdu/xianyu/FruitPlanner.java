@@ -176,6 +176,26 @@ final class FruitPlanner {
         return result;
     }
 
+    static boolean matchesClickTarget(
+            FruitBoardState state,
+            Click click
+    ) {
+        if (state == null || click == null) return false;
+
+        for (FruitBoardState.Fruit fruit : state.boardFruits) {
+            double dx = click.x - fruit.centerX;
+            double dy = click.y - fruit.centerY;
+            double radius = Math.max(
+                    24.0,
+                    Math.min(fruit.width(), fruit.height()) * 0.62
+            );
+            if (dx * dx + dy * dy <= radius * radius) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static String stateKey(FruitBoardState state) {
         StringBuilder sb = new StringBuilder(32 + state.boardFruits.size() * 20);
         sb.append(state.boardFruits.size()).append('|');
