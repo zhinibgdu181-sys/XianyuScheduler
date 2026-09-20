@@ -2,14 +2,12 @@ package com.zhinibgdu.xianyu;
 
 /** Task routing is decided before any task button is clicked. */
 public enum TaskCategory {
-    ALL("自动任务"), LOCAL("闲鱼本地任务"), VIDEO("视频任务"), GAME("已移除的小游戏任务"), JUMP("跳转任务");
+    ALL("自动任务"), LOCAL("闲鱼本地任务"), VIDEO("视频任务"), JUMP("跳转任务");
     public final String label;
     TaskCategory(String label) { this.label = label; }
     public static TaskCategory fromMode(String mode) {
         if (mode == null || "auto".equals(mode)) return ALL;
-        // GAME is retained only as a compile-time compatibility enum for old
-        // executor code. The user removed the game module, so stale intents
-        // must never be allowed to start it.
+        // Reject stale pre-4.48.0 game-mode intents.
         if ("GAME".equalsIgnoreCase(mode)) return null;
         try { return valueOf(mode); } catch (IllegalArgumentException e) { return null; }
     }
