@@ -16,7 +16,8 @@ import java.util.Set;
  * permission to blindly click stale coordinates.
  */
 final class FruitPlanner {
-    private static final double PAIR_MAX_DISTANCE = 0.29;
+    private static final double PAIR_MAX_DISTANCE = 0.20;
+    private static final double PAIR_AMBIGUITY_MARGIN = 0.035;
     private static final int MAX_SEARCH_DEPTH = 14;
     private static final long SEARCH_BUDGET_MS = 220L;
 
@@ -34,16 +35,17 @@ final class FruitPlanner {
                     new HashSet<>(), best, deadline);
 
             if (!best.path.isEmpty()) {
-                List<Click> clicks = new ArrayList<>(best.path.size() * 2);
-                for (Move move : best.path) {
-                    clicks.add(new Click(move.ax, move.ay, "PAIR_FIRST"));
-                    clicks.add(new Click(move.bx, move.by, "PAIR_SECOND"));
-                }
+                // Never replay a long route from a vision model that has not yet
+                // been validated on the live screen. Execute exactly one pair,
+                // verify the state transition, then rebuild the state.
+                Move move = best.path.get(0);
+                List<Click> clicks = new ArrayList<>(2);
+                clicks.add(new Click(move.ax, move.ay, "PAIR_FIRST"));
+                clicks.add(new Click(move.bx, move.by, "PAIR_SECOND"));
                 return new Plan(
                         clicks,
                         best.score,
-                        "全局搜索" + best.path.size() + "组配对"
-                                + (best.solved ? "，预测清空" : "，分段执行")
+                        "确认一组高置信度配对后立即验证"
                 );
             }
         }
@@ -158,12 +160,51 @@ final class FruitPlanner {
                 double similarity = a.similarityDistance(b);
                 if (similarity > PAIR_MAX_DISTANCE) continue;
 
+                // Trust a pair only when the two fruits are each other's clear
+                // nearest neighbour. This rejects broad local-patch colour
+                // matches that can point at the wrong fruit.
+                double aBest = Double.MAX_VALUE;
+                double aSecond = Double.MAX_VALUE;
+                int aBestIndex = -1;
+                double bBest = Double.MAX_VALUE;
+                double bSecond = Double.MAX_VALUE;
+                int bBestIndex = -1;
+
+                for (int k = 0; k < state.boardFruits.size(); k++) {
+                    if (k == i) continue;
+                    double d = a.similarityDistance(state.boardFruits.get(k));
+                    if (d < aBest) {
+                        aSecond = aBest;
+                        aBest = d;
+                        aBestIndex = k;
+                    } else if (d < aSecond) {
+                        aSecond = d;
+                    }
+                }
+                for (int k = 0; k < state.boardFruits.size(); k++) {
+                    if (k == j) continue;
+                    double d = b.similarityDistance(state.boardFruits.get(k));
+                    if (d < bBest) {
+                        bSecond = bBest;
+                        bBest = d;
+                        bBestIndex = k;
+                    } else if (d < bSecond) {
+                        bSecond = d;
+                    }
+                }
+
+                if (aBestIndex != j || bBestIndex != i) continue;
+                if (aSecond - aBest < PAIR_AMBIGUITY_MARGIN) continue;
+                if (bSecond - bBest < PAIR_AMBIGUITY_MARGIN) continue;
+
                 boolean trayMatch = matchesTray(state, a) || matchesTray(state, b);
                 if (state.trayCount() >= 2 && !trayMatch) continue;
 
                 double score = similarityScore(similarity)
                         + 0.22 * (accessA + clickability(state, b))
-                        + (trayMatch ? 0.16 : 0.0);
+                        + (trayMatch ? 0.16 : 0.0)
+                        + 0.35 * Math.min(1.0,
+                        (aSecond - aBest + bSecond - bBest) / 0.20);
 
                 result.add(new Move(
                         i, j,
