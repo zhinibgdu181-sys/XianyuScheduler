@@ -514,122 +514,78 @@ public final class FruitGameSolver {
         return Result.SAFE_STOP_DIRTY;
     }
 
-    /** Find a safe empty point inside the playfield. */
-    private static int[] findBlankKeepAlivePoint(FruitBoardState state) {
-        if (state == null || state.width <= 0 || state.height <= 0) return null;
-
-        int bestX = -1;
-        int bestY = -1;
-        double bestClearance = -1.0;
-
-        int left = Math.round(state.width * 0.10f);
-        int right = Math.round(state.width * 0.90f);
-        int top = Math.round(state.height * 0.08f);
-        int bottom = Math.round(state.height * 0.58f);
-
-        for (int gy = 0; gy < 8; gy++) {
-            int y = top + Math.round((bottom - top) * gy / 7.0f);
-            for (int gx = 0; gx < 10; gx++) {
-                int x = left + Math.round((right - left) * gx / 9.0f);
-                double clearance = blankClearance(state, x, y);
-                if (clearance > bestClearance) {
-                    bestClearance = clearance;
-                    bestX = x;
-                    bestY = y;
-                }
-            }
-        }
-
-        if (bestX < 0 || bestClearance < 38.0) return null;
-        return new int[]{bestX, bestY};
-    }
-
+    /*
+     * Fixed keep-alive zones measured from the user-marked 709x1536 screenshot.
+     * They sit on the brick walls below the roofs, above the green buttons:
+     *
+     * left  ~= (0.24W, 0.795H)
+     * right ~= (0.785W, 0.795H)
+     *
+     * Because these areas are outside the falling-fruit field, recovery no
+     * longer depends on vision finding an empty patch among moving fruits.
+     */
     private static BlankRecoveryResult performBlankRecovery(
             FruitBoardState state,
             Host host,
             int attempt
     ) {
-        int[] start = findBlankKeepAlivePoint(state);
-        if (start == null) return BlankRecoveryResult.none();
+        if (state == null || state.width <= 0 || state.height <= 0) {
+            return BlankRecoveryResult.none();
+        }
 
-        // Alternate: tap -> short swipe -> tap -> short swipe...
-        // A short swipe is used only when the whole path stays clear of fruits.
-        if ((attempt & 1) == 1) {
-            int distance = Math.max(70, Math.min(150, Math.round(state.width * 0.09f)));
-            int[][] directions = {
-                    {distance, 0}, {-distance, 0},
-                    {0, distance}, {0, -distance}
-            };
-            for (int[] d : directions) {
-                int x2 = start[0] + d[0];
-                int y2 = start[1] + d[1];
-                if (!GameTapPolicy.allows(
-                        start[0], start[1], state.width, state.height,
-                        "IDLE_BLANK_SWIPE")) continue;
-                if (!GameTapPolicy.allows(
-                        x2, y2, state.width, state.height,
-                        "IDLE_BLANK_SWIPE")) continue;
-                if (!isBlankSegment(state, start[0], start[1], x2, y2, 34.0)) continue;
+        int phase = Math.floorMod(attempt, 4);
 
-                if (host.swipe(
-                        start[0], start[1], x2, y2,
-                        220L, "IDLE_BLANK_SWIPE")) {
-                    return new BlankRecoveryResult(
-                            true,
-                            "空白短滑 "
-                                    + start[0] + "," + start[1]
-                                    + "→" + x2 + "," + y2
-                    );
-                }
+        int leftTapX = Math.round(state.width * 0.24f);
+        int rightTapX = Math.round(state.width * 0.785f);
+        int tapY = Math.round(state.height * 0.795f);
+
+        if (phase == 0 || phase == 1) {
+            int x = phase == 0 ? leftTapX : rightTapX;
+            if (GameTapPolicy.allows(
+                    x, tapY, state.width, state.height,
+                    "WALL_KEEPALIVE_TAP")
+                    && host.tap(x, tapY, "WALL_KEEPALIVE_TAP")) {
+                return new BlankRecoveryResult(
+                        true,
+                        (phase == 0 ? "左墙固定点击 @" : "右墙固定点击 @")
+                                + x + "," + tapY
+                );
             }
+            return BlankRecoveryResult.none();
+        }
+
+        int y = Math.round(state.height * 0.790f);
+        int x1;
+        int x2;
+        String side;
+
+        if (phase == 2) {
+            x1 = Math.round(state.width * 0.18f);
+            x2 = Math.round(state.width * 0.30f);
+            side = "左墙";
+        } else {
+            x1 = Math.round(state.width * 0.70f);
+            x2 = Math.round(state.width * 0.82f);
+            side = "右墙";
         }
 
         if (GameTapPolicy.allows(
-                start[0], start[1],
-                state.width, state.height,
-                "IDLE_KEEPALIVE")
-                && host.tap(start[0], start[1], "IDLE_KEEPALIVE")) {
+                x1, y, state.width, state.height,
+                "WALL_KEEPALIVE_SWIPE")
+                && GameTapPolicy.allows(
+                x2, y, state.width, state.height,
+                "WALL_KEEPALIVE_SWIPE")
+                && host.swipe(
+                x1, y, x2, y,
+                220L, "WALL_KEEPALIVE_SWIPE")) {
             return new BlankRecoveryResult(
                     true,
-                    "空白点击 @" + start[0] + "," + start[1]
+                    side + "固定短滑 "
+                            + x1 + "," + y + "→" + x2 + "," + y
             );
         }
 
         return BlankRecoveryResult.none();
-    }
-
-    private static boolean isBlankSegment(
-            FruitBoardState state,
-            int x1, int y1,
-            int x2, int y2,
-            double minClearance
-    ) {
-        for (int i = 0; i <= 6; i++) {
-            double t = i / 6.0;
-            int x = (int) Math.round(x1 + (x2 - x1) * t);
-            int y = (int) Math.round(y1 + (y2 - y1) * t);
-            if (blankClearance(state, x, y) < minClearance) return false;
-        }
-        return true;
-    }
-
-    private static double blankClearance(
-            FruitBoardState state,
-            int x,
-            int y
-    ) {
-        if (state.boardFruits.isEmpty()) return 9999.0;
-        double clearance = Double.MAX_VALUE;
-        for (FruitBoardState.Fruit fruit : state.boardFruits) {
-            double dx = 0.0;
-            if (x < fruit.left) dx = fruit.left - x;
-            else if (x > fruit.right) dx = x - fruit.right;
-            double dy = 0.0;
-            if (y < fruit.top) dy = fruit.top - y;
-            else if (y > fruit.bottom) dy = y - fruit.bottom;
-            clearance = Math.min(clearance, Math.hypot(dx, dy));
-        }
-        return clearance;
     }
 
     private static final class BlankRecoveryResult {
