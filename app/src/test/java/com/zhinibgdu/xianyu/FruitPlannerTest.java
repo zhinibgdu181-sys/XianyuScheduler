@@ -53,17 +53,21 @@ public class FruitPlannerTest {
     }
 
     @Test
-    public void fullTrayRejectsUnmatchedExploration() {
+    public void fullTrayDoesNotSuppressPairRescue() {
         FruitBoardState.Fruit tray = new FruitBoardState.Fruit(500, 2050, 465, 2015, 535, 2085,
                 4900, 70, 220, 70, 120, 0.8f, 0.8f,
                 new float[]{0.0f,0.0f,0.0f,0.0f,0.8f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f});
         FruitBoardState state = new FruitBoardState(
                 1080, 2400,
-                Arrays.asList(fruit(300, 900, 240, 70, 70, 0)),
+                Arrays.asList(
+                        fruit(300, 900, 240, 70, 70, 0),
+                        fruit(700, 1200, 230, 90, 80, 20)
+                ),
                 Arrays.asList(tray, tray, tray)
         );
 
         FruitPlanner.Plan plan = FruitPlanner.plan(state);
-        assertTrue(plan.isEmpty());
+        assertFalse(plan.isEmpty());
+        assertTrue(plan.reason.contains("执行一组后立即验证"));
     }
 }
