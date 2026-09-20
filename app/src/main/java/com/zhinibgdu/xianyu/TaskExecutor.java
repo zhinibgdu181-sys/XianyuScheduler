@@ -7007,6 +7007,335 @@ public final class TaskExecutor {
     }
 
 
+    private static RootResult tryHumanizedInputV450(
+            String suPath,
+            String command
+    ) {
+        if (!running || standaloneHumanLearningV450
+                || lastContext == null || command == null) {
+            return null;
+        }
+
+        String trimmed = command.trim();
+        Matcher tap = Pattern.compile(
+                "^input\\s+tap\\s+(\\d+)\\s+(\\d+)\\s*$",
+                Pattern.CASE_INSENSITIVE
+        ).matcher(trimmed);
+        if (tap.matches()) {
+            HumanGestureStyleStore.GestureTemplate style =
+                    HumanGestureStyleStore.sampleTap(lastContext);
+            if (style == null) return null;
+            int x = Integer.parseInt(tap.group(1));
+            int y = Integer.parseInt(tap.group(2));
+            return replayHumanTapV450(suPath, x, y, style);
+        }
+
+        Matcher swipe = Pattern.compile(
+                "^input\\s+swipe\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)(?:\\s+(\\d+))?\\s*$",
+                Pattern.CASE_INSENSITIVE
+        ).matcher(trimmed);
+        if (swipe.matches()) {
+            int x1 = Integer.parseInt(swipe.group(1));
+            int y1 = Integer.parseInt(swipe.group(2));
+            int x2 = Integer.parseInt(swipe.group(3));
+            int y2 = Integer.parseInt(swipe.group(4));
+            int fallbackDuration = swipe.group(5) == null
+                    ? 500 : Integer.parseInt(swipe.group(5));
+            HumanGestureStyleStore.GestureTemplate style =
+                    HumanGestureStyleStore.sampleSwipe(
+                            lastContext, x2 - x1, y2 - y1);
+            if (style == null) return null;
+            return replayHumanSwipeV450(
+                    suPath, x1, y1, x2, y2, fallbackDuration, style);
+        }
+
+        return null;
+    }
+
+    private static RootResult replayHumanTapV450(
+            String suPath,
+            int targetX,
+            int targetY,
+            HumanGestureStyleStore.GestureTemplate style
+    ) {
+        int[] screen = getScreenSizeV43(suPath);
+        if (screen == null || screen.length < 2 || screen[0] <= 0 || screen[1] <= 0) {
+            return null;
+        }
+
+        TouchInjectionTargetV450 target =
+                resolveTouchInjectionTargetV450(suPath, screen[0], screen[1]);
+        if (target == null) return null;
+
+        ArrayList<int[]> mapped = new ArrayList<>();
+        List<int[]> source = style.points;
+        int sx = source.isEmpty() ? 0 : source.get(0)[0];
+        int sy = source.isEmpty() ? 0 : source.get(0)[1];
+        int duration = Math.max(35, Math.min(260, style.durationMs));
+
+        if (source.isEmpty()) {
+            mapped.add(new int[]{targetX, targetY, 0});
+            mapped.add(new int[]{targetX, targetY, duration});
+        } else {
+            for (int i = 0; i < source.size(); i++) {
+                int[] p = source.get(i);
+                if (p == null || p.length < 3) continue;
+                double scaleX = (double) screen[0] / Math.max(1, style.width);
+                double scaleY = (double) screen[1] / Math.max(1, style.height);
+                int dx = (int) Math.round((p[0] - sx) * scaleX);
+                int dy = (int) Math.round((p[1] - sy) * scaleY);
+                // Tap micro-motion is learned, but bounded tightly so a learned
+                // finger drift cannot move the click out of a small target.
+                dx = Math.max(-8, Math.min(8, dx));
+                dy = Math.max(-8, Math.min(8, dy));
+                int t = (int) Math.round(
+                        (double) Math.max(0, p[2])
+                                * duration / Math.max(1, style.durationMs));
+                mapped.add(new int[]{
+                        clampV450(targetX + dx, 1, screen[0] - 2),
+                        clampV450(targetY + dy, 1, screen[1] - 2),
+                        Math.max(0, Math.min(duration, t))
+                });
+            }
+            if (mapped.isEmpty()) {
+                mapped.add(new int[]{targetX, targetY, 0});
+                mapped.add(new int[]{targetX, targetY, duration});
+            }
+        }
+
+        RootResult result = injectTouchPathV450(
+                suPath, target, mapped, duration, "TAP");
+        if (result != null && result.exitCode == 0) {
+            diagnostic("[学习真人V4.50] 使用已学习点击：hold="
+                    + duration + "ms points=" + mapped.size());
+        }
+        return result;
+    }
+
+    private static RootResult replayHumanSwipeV450(
+            String suPath,
+            int x1,
+            int y1,
+            int x2,
+            int y2,
+            int fallbackDuration,
+            HumanGestureStyleStore.GestureTemplate style
+    ) {
+        int[] screen = getScreenSizeV43(suPath);
+        if (screen == null || screen.length < 2 || screen[0] <= 0 || screen[1] <= 0) {
+            return null;
+        }
+
+        TouchInjectionTargetV450 target =
+                resolveTouchInjectionTargetV450(suPath, screen[0], screen[1]);
+        if (target == null || style.points.size() < 2) return null;
+
+        int sx = style.startX();
+        int sy = style.startY();
+        int ex = style.endX();
+        int ey = style.endY();
+        double sdx = ex - sx;
+        double sdy = ey - sy;
+        double sourceLen = Math.hypot(sdx, sdy);
+        double tdx = x2 - x1;
+        double tdy = y2 - y1;
+        double targetLen = Math.hypot(tdx, tdy);
+        if (sourceLen < 10.0 || targetLen < 10.0) return null;
+
+        double distanceRatio = targetLen / sourceLen;
+        double scaledHumanDuration = style.durationMs
+                * Math.max(0.72, Math.min(1.45, Math.sqrt(distanceRatio)));
+        int baseDuration = Math.max(120, fallbackDuration);
+        int duration = (int) Math.round(
+                Math.max(baseDuration * 0.72,
+                        Math.min(baseDuration * 1.38,
+                                (scaledHumanDuration * 2.0 + baseDuration) / 3.0)));
+        duration = Math.max(140, Math.min(1800, duration));
+
+        ArrayList<int[]> mapped = new ArrayList<>();
+        double sourceLen2 = sourceLen * sourceLen;
+        double normalX = -tdy / targetLen;
+        double normalY = tdx / targetLen;
+        int maxPoints = Math.min(28, style.points.size());
+
+        for (int i = 0; i < maxPoints; i++) {
+            int sourceIndex = maxPoints <= 1
+                    ? 0
+                    : (int) Math.round(
+                            i * (style.points.size() - 1.0) / (maxPoints - 1.0));
+            int[] p = style.points.get(sourceIndex);
+            if (p == null || p.length < 3) continue;
+
+            double rx = p[0] - sx;
+            double ry = p[1] - sy;
+            double u = (rx * sdx + ry * sdy) / sourceLen2;
+            double cross = sdx * ry - sdy * rx;
+            double signedDeviation = cross / sourceLen;
+
+            // Preserve the learned curved path, scaled to the requested swipe length.
+            double mappedX = x1 + u * tdx
+                    + normalX * signedDeviation * distanceRatio;
+            double mappedY = y1 + u * tdy
+                    + normalY * signedDeviation * distanceRatio;
+            int t = (int) Math.round(
+                    (double) Math.max(0, p[2])
+                            * duration / Math.max(1, style.durationMs));
+
+            mapped.add(new int[]{
+                    clampV450((int) Math.round(mappedX), 1, screen[0] - 2),
+                    clampV450((int) Math.round(mappedY), 1, screen[1] - 2),
+                    Math.max(0, Math.min(duration, t))
+            });
+        }
+
+        if (mapped.size() < 2) return null;
+        mapped.get(0)[0] = clampV450(x1, 1, screen[0] - 2);
+        mapped.get(0)[1] = clampV450(y1, 1, screen[1] - 2);
+        mapped.get(0)[2] = 0;
+        int[] last = mapped.get(mapped.size() - 1);
+        last[0] = clampV450(x2, 1, screen[0] - 2);
+        last[1] = clampV450(y2, 1, screen[1] - 2);
+        last[2] = duration;
+
+        RootResult result = injectTouchPathV450(
+                suPath, target, mapped, duration, "SWIPE");
+        if (result != null && result.exitCode == 0) {
+            SwipeCurveMetricsV472 curve =
+                    calculateSwipeCurveMetricsV472(x1, y1, x2, y2, mapped);
+            diagnostic("[学习真人V4.50] 使用已学习曲线滑动：duration="
+                    + duration + "ms curveRad=" + curve.curvatureRad
+                    + " maxDev=" + curve.maxDeviation
+                    + " points=" + mapped.size());
+        }
+        return result;
+    }
+
+    private static final class TouchInjectionTargetV450 {
+        final String device;
+        final int rawMaxX;
+        final int rawMaxY;
+        final int screenW;
+        final int screenH;
+
+        TouchInjectionTargetV450(
+                String device, int rawMaxX, int rawMaxY, int screenW, int screenH) {
+            this.device = device;
+            this.rawMaxX = rawMaxX;
+            this.rawMaxY = rawMaxY;
+            this.screenW = screenW;
+            this.screenH = screenH;
+        }
+    }
+
+    private static TouchInjectionTargetV450 resolveTouchInjectionTargetV450(
+            String suPath,
+            int screenW,
+            int screenH
+    ) {
+        String device = physicalTouchDevice;
+        if (device == null || device.isEmpty()) {
+            device = findTouchscreenDeviceV48(suPath);
+        }
+        if (device == null || device.isEmpty()) return null;
+
+        int maxX = physicalTouchMaxXV469;
+        int maxY = physicalTouchMaxYV469;
+        if (maxX <= 0 || maxY <= 0) {
+            int[] ranges = getTouchscreenAxisMaxV469(suPath, device);
+            maxX = ranges[0];
+            maxY = ranges[1];
+        }
+        if (maxX <= 0 || maxY <= 0) return null;
+
+        physicalTouchDevice = device;
+        physicalTouchMaxXV469 = maxX;
+        physicalTouchMaxYV469 = maxY;
+        return new TouchInjectionTargetV450(
+                device, maxX, maxY, screenW, screenH);
+    }
+
+    private static RootResult injectTouchPathV450(
+            String suPath,
+            TouchInjectionTargetV450 target,
+            List<int[]> points,
+            int durationMs,
+            String kind
+    ) {
+        if (target == null || points == null || points.isEmpty()) return null;
+        if (userAborted || physicalTouchDetected) {
+            return new RootResult(-4, "", "manual_takeover_hard_stop");
+        }
+
+        int trackingId = 1000 + (int) (SystemClock.elapsedRealtime() % 20000L);
+        String dev = target.device;
+        StringBuilder cmd = new StringBuilder(4096);
+
+        int[] first = points.get(0);
+        int rawX = pixelToRawV450(first[0], target.screenW, target.rawMaxX);
+        int rawY = pixelToRawV450(first[1], target.screenH, target.rawMaxY);
+
+        // Linux multitouch protocol-B sequence. This keeps one finger down for the
+        // whole learned path, unlike chaining several "input swipe" commands.
+        cmd.append("sendevent ").append(dev).append(" 3 47 0;");
+        cmd.append("sendevent ").append(dev).append(" 3 57 ").append(trackingId).append(';');
+        cmd.append("sendevent ").append(dev).append(" 1 330 1;");
+        cmd.append("sendevent ").append(dev).append(" 3 53 ").append(rawX).append(';');
+        cmd.append("sendevent ").append(dev).append(" 3 54 ").append(rawY).append(';');
+        cmd.append("sendevent ").append(dev).append(" 0 0 0;");
+
+        int previousT = Math.max(0, first.length >= 3 ? first[2] : 0);
+        for (int i = 1; i < points.size(); i++) {
+            int[] p = points.get(i);
+            if (p == null || p.length < 3) continue;
+            int t = Math.max(previousT, Math.min(durationMs, p[2]));
+            int delta = t - previousT;
+            if (delta >= 5) {
+                cmd.append(String.format(
+                        Locale.US, "sleep %.3f;", delta / 1000.0));
+            }
+            rawX = pixelToRawV450(p[0], target.screenW, target.rawMaxX);
+            rawY = pixelToRawV450(p[1], target.screenH, target.rawMaxY);
+            cmd.append("sendevent ").append(dev).append(" 3 53 ").append(rawX).append(';');
+            cmd.append("sendevent ").append(dev).append(" 3 54 ").append(rawY).append(';');
+            cmd.append("sendevent ").append(dev).append(" 0 0 0;");
+            previousT = t;
+        }
+
+        if (durationMs - previousT >= 5) {
+            cmd.append(String.format(
+                    Locale.US, "sleep %.3f;", (durationMs - previousT) / 1000.0));
+        }
+        cmd.append("sendevent ").append(dev).append(" 3 57 -1;");
+        cmd.append("sendevent ").append(dev).append(" 1 330 0;");
+        cmd.append("sendevent ").append(dev).append(" 0 0 0;");
+
+        long now = SystemClock.elapsedRealtime();
+        lastSyntheticInputAtV411 = now;
+        syntheticInputIgnoreUntilV411 =
+                now + Math.max(1000L, durationMs + 850L);
+        invalidateOcrCacheV411();
+
+        diagnostic("[学习真人V4.50] 注入真人轨迹 " + kind
+                + " points=" + points.size() + " duration=" + durationMs + "ms");
+        return rootRaw(suPath, cmd.toString());
+    }
+
+    private static int pixelToRawV450(int pixel, int screenSize, int rawMax) {
+        if (screenSize <= 1 || rawMax <= 0) return Math.max(0, pixel);
+        return (int) Math.max(
+                0L,
+                Math.min(
+                        (long) rawMax,
+                        Math.round((double) pixel * rawMax / (screenSize - 1.0))
+                )
+        );
+    }
+
+    private static int clampV450(int value, int min, int max) {
+        if (max < min) return min;
+        return Math.max(min, Math.min(max, value));
+    }
+
     private static boolean isUiMutationCommandV412(String command) {
         if (command == null) return false;
         String c = command.trim().toLowerCase(Locale.US);
@@ -7035,6 +7364,14 @@ public final class TaskExecutor {
                 diagnostic("[硬停止V4.13] 人工接管后拦截 UI 操作：" + command);
                 return new RootResult(-4, "", "manual_takeover_hard_stop");
             }
+        }
+
+        // Once enough real gestures have been learned, replace simple shell tap/
+        // swipe commands with a continuous learned touch path. If no compatible
+        // sample/device is available, keep the existing deterministic command.
+        if (command != null && running) {
+            RootResult humanized = tryHumanizedInputV450(suPath, command);
+            if (humanized != null) return humanized;
         }
 
         if (command != null) {
