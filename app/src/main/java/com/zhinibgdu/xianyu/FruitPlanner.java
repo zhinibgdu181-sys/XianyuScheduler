@@ -16,10 +16,10 @@ import java.util.Set;
  * permission to blindly click stale coordinates.
  */
 final class FruitPlanner {
-    private static final double PAIR_MAX_DISTANCE = 0.30;
-    private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.17;
-    private static final double PAIR_AMBIGUITY_MARGIN = 0.006;
-    private static final double PAIR_RESCUE_MAX_DISTANCE = 0.65;
+    private static final double PAIR_MAX_DISTANCE = 0.24;
+    private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.13;
+    private static final double PAIR_AMBIGUITY_MARGIN = 0.015;
+    private static final double PAIR_RESCUE_MAX_DISTANCE = 0.38;
     private static final int MAX_SEARCH_DEPTH = 14;
     private static final long SEARCH_BUDGET_MS = 220L;
 
