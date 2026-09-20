@@ -9,7 +9,7 @@ final class GameTapPolicy {
         if ("水果游戏-开始游戏".equals(reason))
             return nx >= 560.0/1440 && nx <= 880.0/1440 && ny >= 2180.0/3120 && ny <= 2500.0/3120;
         if ("水果游戏-死局设置".equals(reason))
-            return nx >= .005 && nx <= .065 && ny >= .005 && ny <= .045;
+            return nx >= .035 && nx <= .13 && ny >= .035 && ny <= .12;
         if ("水果游戏-死局重新开始".equals(reason)
                 || "水果游戏-死局确认重开".equals(reason))
             return nx >= .18 && nx <= .82 && ny >= .22 && ny <= .82;
@@ -35,7 +35,8 @@ final class GameTapPolicy {
         // Clean fruit solver route actions. Keep them strictly inside the
         // detected board region; do not let a planner turn the whitelist into
         // an unrestricted screen tap path.
-        if ("PAIR_FIRST".equals(reason)
+        if ("RULE_FRUIT_CLICK".equals(reason)
+                || "PAIR_FIRST".equals(reason)
                 || "PAIR_SECOND".equals(reason)
                 || "TRAY_MATCH".equals(reason)
                 || "DEADLOCK_TRAY_MATCH".equals(reason)
@@ -43,9 +44,6 @@ final class GameTapPolicy {
                 || "水果游戏-V4.87-BOARD_PUSH".equals(reason)
                 || "水果游戏-V4.87-TRAY_MATCH".equals(reason)) {
             return ny >= .00 && ny <= .61;
-        }
-        if ("FRUIT_DEADLOCK_SHUFFLE".equals(reason)) {
-            return nx >= .62 && nx <= .92 && ny >= .86 && ny <= .99;
         }
         return false;
     }
