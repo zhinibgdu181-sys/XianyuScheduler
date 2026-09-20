@@ -2,6 +2,7 @@ package com.zhinibgdu.xianyu;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 public class TaskCategoryRemovalTest {
@@ -18,4 +19,10 @@ public class TaskCategoryRemovalTest {
         assertNull(TaskCategory.classify("水果小游戏"));
         assertNull(TaskCategory.classify("麻将小游戏"));
     }
+
+    @Test
+    public void polishModeIsIndependentCategory() {
+        assertEquals(TaskCategory.POLISH, TaskCategory.fromMode("POLISH"));
+    }
+
 }
