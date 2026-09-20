@@ -22,7 +22,7 @@ final class FruitVisionEngine {
     private static final float BOARD_TOP = 0.16f;
     private static final float BOARD_BOTTOM = 0.82f;
     private static final float TRAY_TOP = 0.82f;
-    private static final float TRAY_BOTTOM = 0.97f;
+    private static final float TRAY_BOTTOM = 0.91f;
 
     private FruitVisionEngine() {}
 
@@ -276,7 +276,7 @@ final class FruitVisionEngine {
         candidates.sort((a, b) -> Integer.compare(b.score, a.score));
 
         List<Seed> kept = new ArrayList<>();
-        final int minDistance = Math.max(32, Math.min(58, width / 22));
+        final int minDistance = Math.max(96, Math.round(width * 0.12f));
         for (Seed candidate : candidates) {
             boolean tooClose = false;
             for (Seed existing : kept) {
@@ -291,7 +291,7 @@ final class FruitVisionEngine {
             if (!tooClose) {
                 kept.add(candidate);
             }
-            if (kept.size() >= 72) break;
+            if (kept.size() >= 90) break;
         }
 
         List<FruitBoardState.Fruit> result = new ArrayList<>();
