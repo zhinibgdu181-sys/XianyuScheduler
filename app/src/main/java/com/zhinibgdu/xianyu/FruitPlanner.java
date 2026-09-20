@@ -16,12 +16,12 @@ import java.util.Set;
  * permission to blindly click stale coordinates.
  */
 final class FruitPlanner {
-    private static final double PAIR_MAX_DISTANCE = 0.32;
+    private static final double PAIR_MAX_DISTANCE = 0.26;
     private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.18;
-    private static final double PAIR_AMBIGUITY_MARGIN = 0.012;
+    private static final double PAIR_AMBIGUITY_MARGIN = 0.018;
     private static final double PAIR_RESCUE_MAX_DISTANCE = 0.28;
     private static final double TRAY_MATCH_MAX_DISTANCE = 0.24;
-    private static final double MIN_DROP_SCORE = 0.44;
+    private static final double MIN_DROP_SCORE = 0.22;
     private static final int MAX_DOWNWARD_BLOCKERS = 1;
     private static final int MAX_SEARCH_DEPTH = 14;
     private static final long SEARCH_BUDGET_MS = 280L;
@@ -109,36 +109,24 @@ final class FruitPlanner {
         }
 
         if (!rootMoves.isEmpty()) {
-            long deadline = System.nanoTime() + SEARCH_BUDGET_MS * 1_000_000L;
-            SearchResult best = new SearchResult();
-            search(state, rootMoves, 0, 0.0, new ArrayList<>(),
-                    new HashSet<>(), best, deadline);
-
-            // Even if bounded look-ahead expires immediately, never convert a
-            // valid root move set into "无安全动作". Fall back to the best
-            // already-ranked root pair.
-            if (best.path.isEmpty()) {
-                rootMoves.sort((a, b) -> Double.compare(b.score, a.score));
-                best.path.add(rootMoves.get(0));
-                best.score = rootMoves.get(0).score;
-            }
-
-            if (!best.path.isEmpty()) {
-                // Never replay a long route from a vision model that has not yet
-                // been validated on the live screen. Execute exactly one pair,
-                // verify the state transition, then rebuild the state.
-                Move move = best.path.get(0);
-                List<Click> clicks = new ArrayList<>(2);
-                clicks.add(new Click(move.ax, move.ay, "PAIR_FIRST"));
-                clicks.add(new Click(move.bx, move.by, "PAIR_SECOND"));
-                return new Plan(
-                        clicks,
-                        best.score,
-                        (rescue ? "常规配对为0，启动最近邻救援=" : "候选配对=")
-                                + rootMoves.size()
-                                + "，执行一组后立即验证"
-                );
-            }
+            /*
+             * Human-like mode: do not simulate 14 future pair removals from a
+             * physics model that cannot predict the live pile. The reference
+             * recording clears the board by repeatedly choosing one obvious
+             * same-fruit pair, tapping it, then looking again.
+             */
+            rootMoves.sort((a, b) -> Double.compare(b.score, a.score));
+            Move move = rootMoves.get(0);
+            List<Click> clicks = new ArrayList<>(2);
+            clicks.add(new Click(move.ax, move.ay, "PAIR_FIRST"));
+            clicks.add(new Click(move.bx, move.by, "PAIR_SECOND"));
+            return new Plan(
+                    clicks,
+                    move.score,
+                    (rescue ? "严格同类救援=" : "人类式当前帧配对=")
+                            + rootMoves.size()
+                            + "，点一对后立刻重看"
+            );
         }
 
 
@@ -261,24 +249,24 @@ final class FruitPlanner {
             FruitBoardState.Fruit a = state.boardFruits.get(i);
             double accessA = clickability(state, a);
             int belowA = downwardBlockers(state, a);
-            if (accessA < MIN_DROP_SCORE || belowA > MAX_DOWNWARD_BLOCKERS) {
-                continue;
-            }
 
             for (int j = i + 1; j < n; j++) {
                 FruitBoardState.Fruit b = state.boardFruits.get(j);
                 double accessB = clickability(state, b);
                 int belowB = downwardBlockers(state, b);
-                if (accessB < MIN_DROP_SCORE || belowB > MAX_DOWNWARD_BLOCKERS) {
-                    continue;
-                }
                 double similarity = distance[i][j];
                 if (similarity > PAIR_MAX_DISTANCE) continue;
 
                 boolean reciprocal = bestIndex[i] == j && bestIndex[j] == i;
                 boolean oneWayNearest = bestIndex[i] == j || bestIndex[j] == i;
                 boolean closeEnough = similarity <= PAIR_HIGH_CONFIDENCE_DISTANCE;
-                if (!reciprocal && !oneWayNearest && !closeEnough) continue;
+
+                // Identity stays strict; physics does not. A pair can be chosen
+                // from anywhere on the board if it is visually convincing.
+                boolean identityAccepted = closeEnough
+                        || (reciprocal && similarity <= 0.24)
+                        || (oneWayNearest && similarity <= 0.21);
+                if (!identityAccepted) continue;
 
                 double aMargin = second[i] == Double.MAX_VALUE
                         ? 0.0 : second[i] - best[i];
@@ -295,12 +283,18 @@ final class FruitPlanner {
 
                 boolean trayMatch = matchesTray(state, a) || matchesTray(state, b);
 
-                double score = similarityScore(similarity)
-                        + 0.42 * (accessA + accessB)
-                        + (trayMatch ? 0.10 : 0.0)
-                        + (reciprocal ? 0.10 : 0.0)
-                        + 0.20 * Math.min(1.0, (aMargin + bMargin) / 0.12)
-                        - 0.12 * (belowA + belowB);
+                double lowerA = Math.min(1.0,
+                        a.centerY / (double) Math.max(1, state.height * 0.60));
+                double lowerB = Math.min(1.0,
+                        b.centerY / (double) Math.max(1, state.height * 0.60));
+
+                double score = 2.20 * similarityScore(similarity)
+                        + 0.22 * (accessA + accessB)
+                        + 0.18 * (lowerA + lowerB)
+                        + (trayMatch ? 0.16 : 0.0)
+                        + (reciprocal ? 0.16 : 0.0)
+                        + 0.12 * Math.min(1.0, (aMargin + bMargin) / 0.12)
+                        - 0.035 * Math.min(6, belowA + belowB);
 
                 // Lower fruit first. If two matching fruits are vertically
                 // related, clearing the lower one is more likely to open the
@@ -372,14 +366,12 @@ final class FruitPlanner {
             double accessB = clickability(state, fb);
             int belowA = downwardBlockers(state, fa);
             int belowB = downwardBlockers(state, fb);
-            if (accessA < 0.30 || accessB < 0.30 || belowA > 2 || belowB > 2) {
-                continue;
-            }
             double d = fa.similarityDistance(fb);
             double access = 0.24 * (accessA + accessB);
-            double score = Math.max(0.0, 1.0 - d / PAIR_RESCUE_MAX_DISTANCE)
+            double score = 2.0 * Math.max(0.0, 1.0 - d / PAIR_RESCUE_MAX_DISTANCE)
                     + access
-                    + (bestIndex[j] == i ? 0.20 : 0.0);
+                    + (bestIndex[j] == i ? 0.24 : 0.0)
+                    - 0.025 * Math.min(6, belowA + belowB);
             boolean bFirst = fb.centerY > fa.centerY;
             Move move = new Move(
                     a, b,
