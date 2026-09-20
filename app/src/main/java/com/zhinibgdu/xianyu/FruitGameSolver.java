@@ -202,6 +202,7 @@ public final class FruitGameSolver {
                 if (!frame.isRecycled()) frame.recycle();
             }
 
+            host.log("[水果识别诊断] " + FruitPlanner.diagnosticSummary(current));
             FruitPlanner.Plan plan = FruitPlanner.plan(current);
             host.log(String.format(
                     Locale.US,
@@ -224,7 +225,8 @@ public final class FruitGameSolver {
                 }
 
                 if (++noProgress >= MAX_NO_PROGRESS) {
-                    host.log("[水果新求解器] 连续无安全动作，结束本轮并保留现场");
+                    host.log("[水果新求解器] 连续无安全动作，结束本轮并保留现场；"
+                            + FruitPlanner.diagnosticSummary(current));
                     return Result.SAFE_STOP_DIRTY;
                 }
 
