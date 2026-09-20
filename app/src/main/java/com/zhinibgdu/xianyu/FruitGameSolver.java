@@ -95,48 +95,40 @@ public final class FruitGameSolver {
             return Result.SAFE_STOP_CLEAN;
         }
 
-        long deadline = System.currentTimeMillis() + MAX_ROUND_MS;
-        long nextUiProbe = 0L;
-        long lastActionAt = System.currentTimeMillis();
-        int noProgress = 0;
-        int replanCount = 0;
-        long trayRiskSince = 0L;
-        String deadlockTraySignature = "";
-        long stalledSince = 0L;
-        FruitBoardState current = null;
-        Set<String> failedActionKeys = new HashSet<>();
+        final long deadline = System.currentTimeMillis() + MAX_ROUND_MS;
+        final Set<String> blockedActions = new HashSet<>();
 
-        host.log("[水果新求解器] 开始：当前帧识别→选一对同类→快速双击→验证→重看");
-        host.log("[水果新求解器] 不继承旧 FruitGameSolver 的局部决策链");
+        long nextUiProbe = 0L;
+        int badVisionStreak = 0;
+        int unknownTrayStreak = 0;
+
+        host.log("[水果规则引擎] 4.47.0：模板类别 + 三槽状态机");
+        host.log("[水果规则引擎] 只点击模板已知且判定未遮挡的水果；死局直接重开");
 
         while (!host.aborted() && System.currentTimeMillis() < deadline) {
             long now = System.currentTimeMillis();
-
-            // Never intentionally leave the game idle. If recognition/planning
-            // has taken too long without an input, immediately re-observe rather
-            // than adding another sleep that could trigger the game's idle ad.
-            if (now - lastActionAt > MAX_IDLE_BETWEEN_ACTIONS_MS) {
-                host.log("[水果防空闲] 已超过" + MAX_IDLE_BETWEEN_ACTIONS_MS
-                        + "ms没有有效操作；跳过等待，立即重新截图/规划");
-                nextUiProbe = 0L;
-            }
 
             if (now >= nextUiProbe) {
                 UiDecision ui = probeUi(host);
                 nextUiProbe = now + UI_PROBE_INTERVAL_MS;
                 if (ui == UiDecision.COMPLETED) return Result.COMPLETED;
-                if (ui == UiDecision.FAILED) return Result.GAME_FAILED;
+                if (ui == UiDecision.FAILED) {
+                    host.log("[水果规则引擎] 游戏失败页出现，尝试自动重开");
+                    if (tryDeadlockRestart(host, null, "游戏失败")) {
+                        blockedActions.clear();
+                        badVisionStreak = 0;
+                        unknownTrayStreak = 0;
+                        host.sleep(650L, 900L);
+                        continue;
+                    }
+                    return Result.GAME_FAILED;
+                }
                 if (ui == UiDecision.LEFT_GAME) return Result.NOT_FRUIT_GAME;
                 if (ui == UiDecision.PAGE_CHANGED || ui == UiDecision.POPUP_CLOSED) {
-                    // Modal/start/revive actions change the frame. Never run
-                    // fruit vision against the stale modal image.
-                    replanCount++;
-                    noProgress = 0;
-                    failedActionKeys.clear();
-                    trayRiskSince = 0L;
-                    deadlockTraySignature = "";
-                    stalledSince = 0L;
-                    host.sleep(220L, 360L);
+                    blockedActions.clear();
+                    badVisionStreak = 0;
+                    unknownTrayStreak = 0;
+                    host.sleep(180L, 300L);
                     continue;
                 }
             }
@@ -147,451 +139,222 @@ public final class FruitGameSolver {
                     () -> host.aborted()
             );
             if (frame == null) {
-                host.log("[水果新求解器] 截图失败，立即重试而不是进入长时间无动作等待");
-                if (++noProgress >= MAX_NO_PROGRESS) return Result.SAFE_STOP_DIRTY;
-                host.sleep(100L, 170L);
+                if (++badVisionStreak >= MAX_NO_PROGRESS) {
+                    host.log("[水果规则引擎] 连续截图失败，保留现场");
+                    return Result.SAFE_STOP_DIRTY;
+                }
+                host.sleep(90L, 150L);
                 continue;
             }
 
+            FruitBoardState raw;
+            FruitTemplateMatcher.State state;
             try {
-                FruitBoardState observed = FruitVisionEngine.observe(frame);
-                if (observed.width > 0 && observed.height > 0) {
-                    host.onFrameSize(observed.width, observed.height);
+                raw = FruitVisionEngine.observe(frame);
+                state = FruitTemplateMatcher.classify(raw);
+                if (raw.width > 0 && raw.height > 0) {
+                    host.onFrameSize(raw.width, raw.height);
                 }
-
-                if (looksLikeRoundComplete(observed)) {
-                    ScreenOcr.Snapshot finalOcr = host.ocr("水果完成确认");
-                    if (finalOcr != null && !finalOcr.isEmpty()
-                            && looksLikeFailedRound(finalOcr.fullText)) {
-                        return Result.GAME_FAILED;
-                    }
-                    if (finalOcr != null && !finalOcr.isEmpty()
-                            && looksLikeCompletedRoundText(finalOcr.fullText)) {
-                        return Result.COMPLETED;
-                    }
-                }
-
-                if (observed.boardFruits.isEmpty()) {
-                    ScreenOcr.Snapshot emptyCheck = host.ocr("水果空板确认");
-                    if (emptyCheck != null && !emptyCheck.isEmpty()) {
-                        if (looksLikeFailedRound(emptyCheck.fullText)) return Result.GAME_FAILED;
-                        if (looksLikeCompletedRoundText(emptyCheck.fullText)) {
-                            return Result.COMPLETED;
-                        }
-                    }
-                    if (++noProgress >= MAX_NO_PROGRESS) {
-                        host.log("[水果新求解器] 完整状态没有可识别对象，停止并保留现场");
-                        return Result.SAFE_STOP_DIRTY;
-                    }
-                    host.sleep(120L, 180L);
-                    continue;
-                }
-
-                /*
-                 * Vision sanity gate:
-                 * The real board observed in the earlier validated run contained
-                 * 54 fruit objects. The new detector returning R=1/T=2 while OCR
-                 * still says "剩余 202" is an invalid frame, not a legal game
-                 * state. Never turn a bad vision result into an arbitrary unlock
-                 * click.
-                 */
-                if (observed.boardFruits.size() < 6) {
-                    ScreenOcr.Snapshot consistency = host.ocr("水果视觉一致性检查");
-                    int remaining = extractRemainingCount(
-                            consistency == null ? "" : consistency.fullText
-                    );
-                    if (remaining >= 20) {
-                        host.log("[水果视觉保护] 识别结果不可信："
-                                + "检测水果=" + observed.boardFruits.size()
-                                + " / 槽位=" + observed.trayCount()
-                                + " / OCR剩余=" + remaining
-                                + "；禁止UNLOCK，重新截图识别");
-                        noProgress++;
-                        if (noProgress >= MAX_NO_PROGRESS) {
-                            host.log("[水果视觉保护] 连续异常棋盘，停止本轮而不是误点");
-                            return Result.SAFE_STOP_DIRTY;
-                        }
-                        host.sleep(120L, 180L);
-                        continue;
-                    }
-                }
-
-                current = observed;
             } finally {
                 if (!frame.isRecycled()) frame.recycle();
             }
 
-            host.log("[水果识别诊断] " + FruitPlanner.diagnosticSummary(current));
-
-            int trayDistinct = FruitPlanner.distinctTrayTypes(current);
-            FruitPlanner.Plan aggressiveTrayPlan =
-                    FruitPlanner.planAggressiveTrayMatch(current, failedActionKeys);
-            boolean hasAggressiveTrayMatch = !aggressiveTrayPlan.isEmpty();
-            String traySignature = traySignature(current);
-            long decisionNow = System.currentTimeMillis();
-
-            boolean trayRisk = trayDistinct >= 2 && !hasAggressiveTrayMatch;
-            if (trayRisk) {
-                if (trayRiskSince == 0L
-                        || !traySignature.equals(deadlockTraySignature)) {
-                    trayRiskSince = decisionNow;
-                    deadlockTraySignature = traySignature;
-                    host.log("[水果死局计时] 槽内不同水果=" + trayDistinct
-                            + "，当前无可补齐同类；开始2秒忍耐计时");
-                }
-            } else {
-                trayRiskSince = 0L;
-                deadlockTraySignature = "";
-            }
-
-            boolean criticalTray = trayDistinct >= 3 && !hasAggressiveTrayMatch;
-            boolean trayTimedOut = trayRisk
-                    && decisionNow - trayRiskSince >= DEADLOCK_WAIT_MS;
-
-            FruitPlanner.Plan plan;
-            if (hasAggressiveTrayMatch && trayDistinct >= 2) {
-                plan = aggressiveTrayPlan;
-                host.log("[水果破局] 槽内已有" + trayDistinct
-                        + "种水果，优先强制补齐槽内同类");
-            } else {
-                plan = FruitPlanner.plan(current, failedActionKeys);
-            }
-
-            host.log(String.format(
-                    Locale.US,
-                    "[水果搜索] R=%d T=%d trayTypes=%d 路线点击=%d score=%.3f reason=%s",
-                    current.boardFruits.size(),
-                    current.trayCount(),
-                    trayDistinct,
-                    plan.clicks.size(),
-                    plan.score,
-                    plan.reason
-            ));
-
-            boolean generalStallTimedOut =
-                    stalledSince > 0L
-                            && decisionNow - stalledSince >= DEADLOCK_WAIT_MS;
-
-            if (criticalTray || trayTimedOut || generalStallTimedOut) {
-                String why = criticalTray
-                        ? "槽内已有3种不同水果"
-                        : (trayTimedOut
-                        ? "槽内2种不同水果等待同类超过2秒"
-                        : "连续候选无效/无Pair超过2秒");
-                host.log("[水果死局] " + why + "，禁止继续被动扫描");
-
-                // First priority is always a strict identity match to something
-                // already occupying the collector. Physics restrictions are
-                // relaxed, fruit identity is not.
-                if (!aggressiveTrayPlan.isEmpty()) {
-                    plan = aggressiveTrayPlan;
-                    host.log("[水果死局] 找到槽内严格同类，强制补齐而不是打乱");
-                } else if (tryDeadlockShuffle(host, current, why)) {
-                    lastActionAt = System.currentTimeMillis();
-                    failedActionKeys.clear();
-                    noProgress = 0;
-                    trayRiskSince = 0L;
-                    deadlockTraySignature = "";
-                    stalledSince = 0L;
-                    host.sleep(650L, 900L);
-                    continue;
-                }
-            }
-
-            if (plan.isEmpty()) {
-                ScreenOcr.Snapshot stuck = host.ocr("水果无安全动作确认");
-                if (stuck != null && !stuck.isEmpty()) {
-                    if (looksLikeFailedRound(stuck.fullText)) return Result.GAME_FAILED;
-                    if (looksLikeTaskPanelText(stuck.fullText)) {
-                        host.log("[水果页面守卫] 已离开游戏回到任务面板，停止水果视觉求解");
-                        return Result.NOT_FRUIT_GAME;
-                    }
-                    if (looksLikeCompletedRoundText(stuck.fullText)) {
+            if (looksLikeRoundComplete(raw)) {
+                ScreenOcr.Snapshot done = host.ocr("水果通关确认");
+                if (done != null && !done.isEmpty()) {
+                    if (looksLikeCompletedRoundText(done.fullText)) {
+                        host.log("[水果规则引擎] OCR确认通关");
                         return Result.COMPLETED;
                     }
+                    if (looksLikeFailedRound(done.fullText)) {
+                        if (tryDeadlockRestart(host, state, "失败页")) {
+                            blockedActions.clear();
+                            host.sleep(650L, 900L);
+                            continue;
+                        }
+                        return Result.GAME_FAILED;
+                    }
                 }
+            }
 
-                if (stalledSince == 0L) {
-                    stalledSince = decisionNow;
-                    host.log("[水果死局计时] 当前没有可靠Pair，开始2秒破局计时");
+            int knownBoard = 0;
+            int uncoveredBoard = 0;
+            int unknownBoard = 0;
+            for (FruitTemplateMatcher.DetectedFruit fruit : state.board) {
+                if (fruit.known()) {
+                    knownBoard++;
+                    if (fruit.uncovered) uncoveredBoard++;
+                } else {
+                    unknownBoard++;
                 }
+            }
 
-                if (decisionNow - stalledSince >= DEADLOCK_WAIT_MS) {
-                    if (tryDeadlockShuffle(host, current, "连续2秒没有可靠Pair")) {
-                        lastActionAt = System.currentTimeMillis();
-                        failedActionKeys.clear();
-                        noProgress = 0;
-                        trayRiskSince = 0L;
-                        deadlockTraySignature = "";
-                        stalledSince = 0L;
+            host.log("[水果模板] board=" + state.board.size()
+                    + " known=" + knownBoard
+                    + " uncovered=" + uncoveredBoard
+                    + " unknown=" + unknownBoard
+                    + " tray=" + state.tray.size()
+                    + " trayTypes=" + trayTypeSummary(state));
+
+            if (state.board.size() < 4 && extractRemainingCount(
+                    textOf(host.ocr("水果模板一致性检查"))) >= 20) {
+                badVisionStreak++;
+                host.log("[水果模板] 当前帧候选过少，重新截图，不冒险点击");
+                if (badVisionStreak >= MAX_NO_PROGRESS) {
+                    return Result.SAFE_STOP_DIRTY;
+                }
+                host.sleep(100L, 160L);
+                continue;
+            }
+            badVisionStreak = 0;
+
+            FruitRuleDecisionEngine.Decision decision =
+                    FruitRuleDecisionEngine.decide(state, blockedActions);
+
+            host.log("[水果决策] " + decision.kind + " / " + decision.reason);
+
+            if (decision.kind == FruitRuleDecisionEngine.Kind.RESCAN_UNKNOWN) {
+                unknownTrayStreak++;
+                if (unknownTrayStreak >= 3) {
+                    host.log("[水果决策] 槽位连续3帧无法可靠分类，为避免误点新种类，执行重开");
+                    if (tryDeadlockRestart(host, state, "槽位模板连续未知")) {
+                        blockedActions.clear();
+                        unknownTrayStreak = 0;
                         host.sleep(650L, 900L);
                         continue;
                     }
+                    return Result.SAFE_STOP_DIRTY;
                 }
+                host.sleep(120L, 180L);
+                continue;
+            }
+            unknownTrayStreak = 0;
 
-                noProgress++;
-                host.log("[水果死局计时] 尚未到2秒极限，立即重看棋盘，不执行空白点击/滑动");
+            if (decision.kind == FruitRuleDecisionEngine.Kind.WAIT_TRANSIENT) {
+                host.sleep(180L, 280L);
+                continue;
+            }
+
+            if (decision.kind == FruitRuleDecisionEngine.Kind.RESTART_DEADLOCK) {
+                host.log("[水果死局] " + decision.reason);
+                if (tryDeadlockRestart(host, state, decision.reason)) {
+                    blockedActions.clear();
+                    host.sleep(650L, 900L);
+                    continue;
+                }
+                host.log("[水果死局] 未能确认重开按钮，停止而不是乱点");
+                return Result.SAFE_STOP_DIRTY;
+            }
+
+            FruitTemplateMatcher.DetectedFruit target = decision.target;
+            if (target == null || target.fruit == null
+                    || !target.known() || !target.uncovered) {
+                host.log("[水果规则引擎] 决策目标不是可靠顶层模板水果，重新识别");
                 host.sleep(100L, 160L);
                 continue;
             }
 
-            /*
-             * A plan now contains multiple complete pairs. We execute one pair,
-             * verify the resulting frame, then continue with the already-searched
-             * route only if the board transition is consistent. This removes the
-             * expensive search between every pair without blindly replaying stale
-             * coordinates.
-             */
-            boolean routeBroken = false;
-            ScreenOcr.Snapshot beforeActionOcr = host.ocr("水果配对前剩余数");
-            if (beforeActionOcr != null && !beforeActionOcr.isEmpty()) {
-                String beforeText = beforeActionOcr.fullText;
-                if (looksLikeTaskPanelText(beforeText)) {
-                    host.log("[水果页面守卫] 执行动作前已检测到任务面板，禁止继续点击");
-                    return Result.NOT_FRUIT_GAME;
+            int x = target.fruit.centerX;
+            int y = target.fruit.centerY;
+            if (!GameTapPolicy.allows(
+                    x, y, state.width, state.height,
+                    "RULE_FRUIT_CLICK")) {
+                host.log("[水果规则引擎] 安全白名单拒绝水果点击 @"
+                        + x + "," + y);
+                blockedActions.add(decision.actionKey());
+                continue;
+            }
+
+            ScreenOcr.Snapshot guard = host.ocr("水果规则点击前守卫");
+            if (guard != null && !guard.isEmpty()) {
+                String text = guard.fullText;
+                if (looksLikeTaskPanelText(text)) return Result.NOT_FRUIT_GAME;
+                if (looksLikeFailedRound(text)) {
+                    if (tryDeadlockRestart(host, state, "点击前检测到失败页")) {
+                        blockedActions.clear();
+                        host.sleep(650L, 900L);
+                        continue;
+                    }
+                    return Result.GAME_FAILED;
                 }
-                if (looksLikeLeaveConfirmation(beforeText)
-                        || looksLikeRevivePopup(beforeText)
-                        || looksLikeFruitStartScreen(beforeText)
-                        || looksLikeBlockingFunctionPopupText(beforeText)) {
-                    host.log("[水果页面守卫] 执行动作前出现非棋盘UI，重新交给UI状态机处理");
-                    noProgress = 0;
+                if (looksLikeBlockingFunctionPopupText(text)
+                        || looksLikeLeaveConfirmation(text)
+                        || looksLikeFruitStartScreen(text)) {
                     nextUiProbe = 0L;
                     continue;
                 }
             }
-            int remainingBeforeAction = extractRemainingCount(
-                    beforeActionOcr == null ? "" : beforeActionOcr.fullText
-            );
 
-            for (int routeIndex = 0;
-                    routeIndex < plan.clicks.size();
-                    routeIndex++) {
+            String beforeSignature = templateStateSignature(state);
+            String actionKey = decision.actionKey();
 
-                FruitPlanner.Click click = plan.clicks.get(routeIndex);
-                if (!FruitPlanner.matchesClickTarget(current, click)) {
-                    host.log("[水果执行] 路线坐标已失效，"
-                            + "当前画面与预测状态不一致；废弃剩余路线");
-                    routeBroken = true;
-                    break;
-                }
-                if (!GameTapPolicy.allows(
-                        click.x,
-                        click.y,
-                        current.width,
-                        current.height,
-                        click.reason
-                )) {
-                    host.log("[水果新求解器] GameTapPolicy 拒绝路线："
-                            + click.x + "," + click.y);
-                    routeBroken = true;
-                    break;
-                }
+            host.log("[水果执行] " + target.type
+                    + " conf=" + String.format(Locale.US, "%.2f", target.confidence)
+                    + " @" + x + "," + y
+                    + " / " + decision.reason);
 
-                host.log("[水果执行] 路线 "
-                        + (routeIndex + 1) + "/" + plan.clicks.size()
-                        + " tap " + click.reason
-                        + " @" + click.x + "," + click.y);
-
-                if (!host.tap(click.x, click.y, click.reason)) {
-                    host.log("[水果执行] 路线点击失败，立即废弃剩余路线");
-                    routeBroken = true;
-                    break;
-                }
-
-                lastActionAt = System.currentTimeMillis();
-
-                if (click.reason.equals("PAIR_FIRST")) {
-                    // Give the first fruit time to leave its original cell. The
-                    // real recording shows a visible gravity/roof-roll phase;
-                    // the old 90ms gap often tapped the second fruit before the
-                    // first had opened its fall corridor.
-                    if (!host.sleep(180L, 280L)) return Result.ABORTED;
-                    continue;
-                }
-
-                if (!host.sleep(320L, 480L)) return Result.ABORTED;
-
-                // UNLOCK is intentionally a one-click route. It must be
-                // re-observed before another action is allowed.
-                if (click.reason.equals("UNLOCK")) {
-                    routeBroken = true;
-                    break;
-                }
-
-                /*
-                 * Let OCR run before the structural screenshot. OCR itself costs
-                 * enough time for the clicked fruit to finish falling/rolling.
-                 * The old code captured the "after" frame ~150ms after the tap,
-                 * while the real physics animation was still in progress.
-                 */
-                ScreenOcr.Snapshot afterActionOcr = host.ocr("水果配对后剩余数");
-                if (afterActionOcr != null && !afterActionOcr.isEmpty()) {
-                    String afterText = afterActionOcr.fullText;
-                    if (looksLikeTaskPanelText(afterText)) {
-                        host.log("[水果页面守卫] 点击后页面已回任务面板，停止把任务面板识别成水果");
-                        return Result.NOT_FRUIT_GAME;
-                    }
-                    if (looksLikeLeaveConfirmation(afterText)
-                            || looksLikeRevivePopup(afterText)
-                            || looksLikeFruitStartScreen(afterText)
-                            || looksLikeBlockingFunctionPopupText(afterText)) {
-                        host.log("[水果页面守卫] 点击后出现弹窗/开始页，废弃视觉结果并重新处理UI");
-                        routeBroken = true;
-                        noProgress = 0;
-                        failedActionKeys.clear();
-                        nextUiProbe = 0L;
-                        break;
-                    }
-                }
-
-                int remainingAfterAction = extractRemainingCount(
-                        afterActionOcr == null ? "" : afterActionOcr.fullText
-                );
-                boolean remainingReadable =
-                        remainingBeforeAction >= 0 && remainingAfterAction >= 0;
-                boolean remainingDropped =
-                        remainingReadable && remainingAfterAction < remainingBeforeAction;
-
-                /*
-                 * Remaining-count OCR is authoritative when both readings are
-                 * available. The 4.45.2 log exposed a false success where an
-                 * "解锁所有槽位" modal reduced the number of visible objects from
-                 * 33 to 24 while the counter stayed 202. Never let structural
-                 * change override an unchanged readable counter.
-                 */
-                if (remainingDropped) {
-                    host.log("[水果验证] 计数器确认消除成功："
-                            + click.reason
-                            + "，剩余=" + remainingBeforeAction + "->"
-                            + remainingAfterAction);
-                    failedActionKeys.clear();
-                    if ("TRAY_MATCH".equals(click.reason)
-                            || "DEADLOCK_TRAY_MATCH".equals(click.reason)) {
-                        trayRiskSince = 0L;
-                        deadlockTraySignature = "";
-                    }
-                    stalledSince = 0L;
-                    noProgress = 0;
-                    routeBroken = true;
-                    current = null;
-                    break;
-                }
-
-                Bitmap afterFrame = ScreenOcr.captureBitmap(
-                        context,
-                        suPath,
-                        () -> host.aborted()
-                );
-                if (afterFrame == null) {
-                    host.log("[水果验证] 稳定后截图失败，立即重新识别");
-                    routeBroken = true;
-                    break;
-                }
-
-                FruitBoardState after;
-                try {
-                    after = FruitVisionEngine.observe(afterFrame);
-                    if (after.width > 0 && after.height > 0) {
-                        host.onFrameSize(after.width, after.height);
-                    }
-                } finally {
-                    if (!afterFrame.isRecycled()) afterFrame.recycle();
-                }
-
-                int beforeCount = current.boardFruits.size();
-                int afterCount = after.boardFruits.size();
-                int structuralChange = current.fingerprintChangesAgainst(after);
-                int objectDelta = afterCount - beforeCount;
-                boolean plausibleStructuralDelta = Math.abs(objectDelta) <= 4;
-
-                // Structural pair completion is only a fallback when the OCR
-                // counter is unavailable. Exact -2..-4 reductions are accepted;
-                // large collapses are treated as overlays/modals, not gameplay.
-                boolean pairBoardReduction =
-                        !remainingReadable
-                                && "PAIR_SECOND".equals(click.reason)
-                                && plausibleStructuralDelta
-                                && afterCount <= beforeCount - 2;
-                boolean trayMatchStructural =
-                        !remainingReadable
-                                && ("TRAY_MATCH".equals(click.reason)
-                                || "DEADLOCK_TRAY_MATCH".equals(click.reason))
-                                && plausibleStructuralDelta
-                                && current.trayCount() > 0
-                                && after.trayCount() < current.trayCount()
-                                && afterCount <= beforeCount - 1;
-
-                if (pairBoardReduction || trayMatchStructural) {
-                    host.log("[水果验证] OCR不可用，结构确认动作成功："
-                            + click.reason
-                            + "，识别对象=" + beforeCount + "->" + afterCount
-                            + "，槽位=" + current.trayCount() + "->" + after.trayCount()
-                            + "，结构变化=" + structuralChange);
-                    current = after;
-                    failedActionKeys.clear();
-                    if (trayMatchStructural) {
-                        trayRiskSince = 0L;
-                        deadlockTraySignature = "";
-                    }
-                    stalledSince = 0L;
-                    noProgress = 0;
-                    continue;
-                }
-
-                boolean oneFruitEnteredCollector =
-                        plausibleStructuralDelta
-                                && ("PAIR_SECOND".equals(click.reason)
-                                || "TRAY_MATCH".equals(click.reason)
-                                || "DEADLOCK_TRAY_MATCH".equals(click.reason))
-                                && (afterCount == beforeCount - 1
-                                || after.trayCount() == current.trayCount() + 1);
-                if (oneFruitEnteredCollector) {
-                    host.log("[水果验证] 只确认1个水果进入槽位；"
-                            + "不判失败，下一轮优先寻找槽内同类。"
-                            + " 对象=" + beforeCount + "->" + afterCount
-                            + " 槽位=" + current.trayCount() + "->" + after.trayCount());
-                    current = after;
-                    failedActionKeys.clear();
-                    trayRiskSince = 0L;
-                    deadlockTraySignature = "";
-                    stalledSince = 0L;
-                    routeBroken = true;
-                    noProgress = 0;
-                    break;
-                }
-
-                String failedKey = plan.actionKey();
-                if (!failedKey.isEmpty()) {
-                    failedActionKeys.add(failedKey);
-                    host.log("[水果候选黑名单] 当前局面暂时排除无效动作：" + failedKey);
-                }
-                host.log("[水果验证] 点击后没有证据证明消除/入槽："
-                        + "剩余=" + remainingBeforeAction + "->"
-                        + remainingAfterAction
-                        + "，对象=" + beforeCount + "->" + afterCount
-                        + "，槽位=" + current.trayCount() + "->" + after.trayCount()
-                        + "；废弃本候选并改选其他动作");
-                routeBroken = true;
-                noProgress++;
-
-                if (stalledSince == 0L) {
-                    stalledSince = System.currentTimeMillis();
-                }
-                host.log("[水果死局] 当前候选无效，加入黑名单并立即换候选；"
-                        + "连续无进展达到2秒后改用打乱破局");
-                break;
+            if (!host.tap(x, y, "RULE_FRUIT_CLICK")) {
+                if (!actionKey.isEmpty()) blockedActions.add(actionKey);
+                host.log("[水果执行] ROOT点击失败，当前候选加入黑名单");
+                continue;
             }
 
-            if (!routeBroken && !plan.isEmpty()) {
-                // The complete predicted route was consumed. Re-observe at the
-                // top of the loop for completion/task verification.
-                noProgress = 0;
+            if (!host.sleep(280L, 430L)) return Result.ABORTED;
+
+            ScreenOcr.Snapshot afterOcr = host.ocr("水果单击后守卫");
+            if (afterOcr != null && !afterOcr.isEmpty()) {
+                if (looksLikeCompletedRoundText(afterOcr.fullText)) {
+                    return Result.COMPLETED;
+                }
+                if (looksLikeFailedRound(afterOcr.fullText)) {
+                    host.log("[水果规则引擎] 点击后进入失败页，自动重开");
+                    if (tryDeadlockRestart(host, state, "点击后失败")) {
+                        blockedActions.clear();
+                        host.sleep(650L, 900L);
+                        continue;
+                    }
+                    return Result.GAME_FAILED;
+                }
+                if (looksLikeBlockingFunctionPopupText(afterOcr.fullText)
+                        || looksLikeLeaveConfirmation(afterOcr.fullText)) {
+                    nextUiProbe = 0L;
+                    continue;
+                }
+            }
+
+            Bitmap verifyFrame = ScreenOcr.captureBitmap(
+                    context,
+                    suPath,
+                    () -> host.aborted()
+            );
+            if (verifyFrame == null) {
+                continue;
+            }
+
+            FruitTemplateMatcher.State afterState;
+            try {
+                afterState = FruitTemplateMatcher.classify(
+                        FruitVisionEngine.observe(verifyFrame)
+                );
+            } finally {
+                if (!verifyFrame.isRecycled()) verifyFrame.recycle();
+            }
+
+            String afterSignature = templateStateSignature(afterState);
+            if (beforeSignature.equals(afterSignature)) {
+                if (!actionKey.isEmpty()) blockedActions.add(actionKey);
+                host.log("[水果验证] 点击后模板状态完全未变化，拉黑当前坐标："
+                        + actionKey);
+            } else {
+                blockedActions.clear();
+                host.log("[水果验证] 状态已变化：tray "
+                        + trayTypeSummary(state) + " -> "
+                        + trayTypeSummary(afterState));
             }
         }
 
         if (host.aborted()) return Result.ABORTED;
-        host.log("[水果新求解器] 达到本轮最大运行时间，安全停止并保留当前页面");
+        host.log("[水果规则引擎] 达到单局最大运行时间，保留现场");
         return Result.SAFE_STOP_DIRTY;
     }
 
