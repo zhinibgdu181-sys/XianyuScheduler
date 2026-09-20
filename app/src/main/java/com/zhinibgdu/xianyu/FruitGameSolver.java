@@ -70,7 +70,7 @@ public final class FruitGameSolver {
     }
 
     private static final long MAX_ROUND_MS = 120_000L;
-    private static final long UI_PROBE_INTERVAL_MS = 4_000L;
+    private static final long UI_PROBE_INTERVAL_MS = 900L;
     private static final int MAX_NO_PROGRESS = 4;
 
     private FruitGameSolver() {}
@@ -364,6 +364,7 @@ public final class FruitGameSolver {
         return containsAny(text,
                 "弹窗", "弹出", "复活", "继续游戏", "免费观看",
                 "购买道具", "道具已获得", "确定", "取消", "关闭", "知道了",
+                "广告", "广告加载", "跳过广告", "激励视频", "道具弹窗",
                 "再试一次", "再来一次");
     }
 
@@ -450,13 +451,28 @@ public final class FruitGameSolver {
             return UiDecision.COMPLETED;
         }
 
-        if (looksLikeBlockingFunctionPopupText(text)
+        boolean popupEvidence = looksLikeBlockingFunctionPopupText(text)
                 || looksLikeRevivePopup(text)
-                || containsAny(text, "关闭", "×", "取消", "知道了")) {
+                || containsAny(text, "关闭", "×", "取消", "知道了",
+                "广告", "广告加载", "跳过广告", "激励视频", "道具弹窗");
+        if (popupEvidence) {
             ScreenOcr.Item close = findCloseCandidate(snapshot);
             if (close != null) {
                 if (host.tap(close.centerX(), close.centerY(), "POPUP_CLOSE")) {
-                    host.log("[水果弹窗] 关闭后立即重建完整棋盘");
+                    host.log("[水果弹窗] 已关闭识别到的关闭控件；900ms后再次检查");
+                    return UiDecision.POPUP_CLOSED;
+                }
+            }
+
+            // The ad close glyph is frequently rendered without useful OCR text.
+            // Only use this coordinate fallback when OCR already proves that a
+            // blocking/ad layer exists. Never tap the corner on a normal board.
+            int closeX = Math.round(snapshot.width * 0.94f);
+            int closeY = Math.round(snapshot.height * 0.08f);
+            if (GameTapPolicy.allows(closeX, closeY, snapshot.width, snapshot.height,
+                    "POPUP_CLOSE_TOP_RIGHT")) {
+                if (host.tap(closeX, closeY, "POPUP_CLOSE_TOP_RIGHT")) {
+                    host.log("[水果弹窗] OCR确认广告/弹窗但未识别关闭文字；尝试右上角关闭");
                     return UiDecision.POPUP_CLOSED;
                 }
             }
@@ -475,7 +491,10 @@ public final class FruitGameSolver {
             if (t.contains("取消")) score += 70;
             if (t.contains("知道")) score += 60;
             if (t.contains("×") || t.equalsIgnoreCase("x")) score += 90;
-            if (item.centerX() > snapshot.width * 0.78) score += 25;
+            // Strongly prefer the actual ad-close area in the upper-right.
+            if (item.centerX() > snapshot.width * 0.82
+                    && item.centerY() < snapshot.height * 0.18) score += 100;
+            else if (item.centerX() > snapshot.width * 0.78) score += 25;
             if (item.centerY() < snapshot.height * 0.40) score += 15;
             if (score > bestScore) {
                 bestScore = score;
