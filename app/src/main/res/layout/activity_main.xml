@@ -326,7 +326,7 @@
             </LinearLayout>
         </ScrollView>
 
-        <!-- 自动化：定时 + 三类独立任务 -->
+        <!-- 自动化：定时 + 四个独立任务卡片 -->
         <LinearLayout
             android:id="@+id/page_automation"
             android:layout_width="match_parent"
@@ -355,7 +355,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="单独运行对应分类；定时按本地 → 视频 → 跳转执行已开启分类"
+                    android:text="单独运行对应卡片；定时按擦亮 → 本地 → 视频 → 跳转执行已开启任务"
                     android:textColor="#7A8190"
                     android:textSize="13sp" />
 
@@ -417,7 +417,47 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <!-- 三类任务：每类独立长卡片 -->
+                <!-- 一键擦亮：独立长卡片 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/bg_card"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="18dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="一键擦亮"
+                            android:textColor="#374151"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="5dp"
+                            android:text="进入“我发布的”，自动点击一次顶部一键擦亮"
+                            android:textColor="#9CA3AF"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switch_polish_task"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="一键擦亮任务开关" />
+                </LinearLayout>
+
+                <!-- 任务分类：每类独立长卡片 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

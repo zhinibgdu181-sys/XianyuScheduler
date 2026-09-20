@@ -2,7 +2,7 @@ package com.zhinibgdu.xianyu;
 
 /** Task routing is decided before any task button is clicked. */
 public enum TaskCategory {
-    ALL("自动任务"), LOCAL("闲鱼本地任务"), VIDEO("视频任务"), JUMP("跳转任务");
+    ALL("自动任务"), POLISH("一键擦亮"), LOCAL("闲鱼本地任务"), VIDEO("视频任务"), JUMP("跳转任务");
     public final String label;
     TaskCategory(String label) { this.label = label; }
     public static TaskCategory fromMode(String mode) {

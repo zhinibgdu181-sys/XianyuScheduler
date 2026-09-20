@@ -9,6 +9,7 @@ public final class AppConfig {
     private static final String KEY_HOUR = "hour";
     private static final String KEY_MINUTE = "minute";
     private static final String KEY_ENABLED = "schedule_enabled";
+    private static final String KEY_POLISH_TASK = "enable_polish_task";
     private static final String KEY_LOCAL_TASK = "enable_local_task";
     private static final String KEY_VIDEO_TASK = "enable_video_task";
     private static final String KEY_JUMP_TASK = "enable_jump_task";
@@ -47,6 +48,12 @@ public final class AppConfig {
     }
 
 
+    public static boolean isPolishTaskEnabled(Context context) {
+        // Default true preserves the 4.48.1 behavior after upgrading, while
+        // the new independent card lets the user disable it separately.
+        return prefs(context).getBoolean(KEY_POLISH_TASK, true);
+    }
+
     public static boolean isLocalTaskEnabled(Context context) {
         return prefs(context).getBoolean(KEY_LOCAL_TASK, true);
     }
@@ -59,8 +66,15 @@ public final class AppConfig {
         return prefs(context).getBoolean(KEY_JUMP_TASK, false);
     }
 
-    public static void saveTaskSwitches(Context context, boolean local, boolean video, boolean jump) {
+    public static void saveTaskSwitches(
+            Context context,
+            boolean polish,
+            boolean local,
+            boolean video,
+            boolean jump
+    ) {
         prefs(context).edit()
+                .putBoolean(KEY_POLISH_TASK, polish)
                 .putBoolean(KEY_LOCAL_TASK, local)
                 .putBoolean(KEY_VIDEO_TASK, video)
                 .putBoolean(KEY_JUMP_TASK, jump)

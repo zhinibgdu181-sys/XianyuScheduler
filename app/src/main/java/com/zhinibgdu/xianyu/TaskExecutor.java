@@ -203,6 +203,7 @@ public final class TaskExecutor {
     // V4.48.1: local-task preflight. Polish listings at most once per
     // automation run so recovery/navigation cannot repeat the action.
     private static volatile boolean listingPolishAttemptedV448 = false;
+    private static volatile boolean listingPolishSucceededV448 = false;
 
     private static final String PROFILE_PREFS_V48 = "xianyu_task_profiles_v48";
     private static final int PROFILE_SCHEMA_V411 = 411;
@@ -283,6 +284,7 @@ public final class TaskExecutor {
         lastTaskAbandonedV460 = false;
         lastTaskAbandonedReasonV460 = "";
         listingPolishAttemptedV448 = false;
+        listingPolishSucceededV448 = false;
         currentExecutingTaskV464 = "";
         lastTeachingBeforeV480 = null;
         invalidateOcrCacheV411();
@@ -522,9 +524,25 @@ public final class TaskExecutor {
             freshLaunchV421 = true;
         }
 
-        // V4.21: do not pay an 8-second UIAutomator preflight before the OCR
-        // navigator. On a fresh InitActivity launch the bottom “我的” tab is the
-        // stable first action; destination OCR is the verification.
+        // V4.48.2: “一键擦亮” is an independent task card. Run it
+        // before the task-panel navigator only when its own switch/category is on.
+        boolean runPolish = activeCategory == TaskCategory.POLISH
+                || (activeCategory == TaskCategory.ALL
+                && AppConfig.isPolishTaskEnabled(ctx));
+        if (runPolish) {
+            if (!executeListingPolishCardV448(suPath)) {
+                diagnostic("[一键擦亮V4.48.2] 本次独立擦亮未完成");
+            }
+
+            if (activeCategory == TaskCategory.POLISH) {
+                if (!userAborted) {
+                    returnToApp(ctx, suPath);
+                }
+                return;
+            }
+        }
+
+        // Normal task categories still enter through 闲鱼币 -> 任务面板.
         if (!enterViaMineCoin(
                 suPath,
                 freshLaunchV421
@@ -675,30 +693,6 @@ public final class TaskExecutor {
         if (page.kind == PageKindV411.COIN_HOME) {
             // fall through; reuse this exact OCR frame to click earn-dice.
         } else if (page.kind == PageKindV411.MINE) {
-            // Local-task preflight: 我的 -> 我发布的 -> 一键擦亮 -> 返回我的.
-            // This is intentionally done before entering 闲鱼币 so it never
-            // interferes with the task-panel scanner.
-            if (shouldRunListingPolishV448()) {
-                performListingPolishV448(suPath, page.ocr);
-                if (userAborted || physicalTouchDetected) return false;
-
-                invalidateOcrCacheV411();
-                page = probePageV411(suPath, "一键擦亮后确认我的页");
-                if (page.kind != PageKindV411.MINE) {
-                    diagnostic("[一键擦亮V4.48.1] 返回后未确认‘我的’页，尝试一次安全返回");
-                    if (!preferredRightBackOnceV410(suPath, "一键擦亮返回我的")
-                            || !sleepAbortableV48(500L)) {
-                        return false;
-                    }
-                    page = probePageV411(suPath, "一键擦亮二次返回确认");
-                    if (page.kind != PageKindV411.MINE) {
-                        diagnostic("[一键擦亮V4.48.1] 无法安全恢复‘我的’页，停止本轮导航");
-                        return false;
-                    }
-                }
-            }
-
-            // MINE -> COIN_HOME. Reuse the fresh OCR frame after polish.
             diagnostic("[极速导航V4.26] 复用‘我的’页OCR，立即点击闲鱼币");
             boolean clickedCoin = clickOcrTextAnyV45(
                     suPath, page.ocr, false,
@@ -784,15 +778,72 @@ public final class TaskExecutor {
         return false;
     }
 
-    private static boolean shouldRunListingPolishV448() {
-        if (listingPolishAttemptedV448 || lastContext == null) return false;
-        if (activeCategory == TaskCategory.LOCAL) return true;
-        return activeCategory == TaskCategory.ALL
-                && AppConfig.isLocalTaskEnabled(lastContext);
+    private static boolean executeListingPolishCardV448(String suPath) {
+        if (listingPolishAttemptedV448) return listingPolishSucceededV448;
+        if (userAborted || physicalTouchDetected || !ensureFg(suPath)) return false;
+
+        diagnostic("[一键擦亮V4.48.2] 独立卡片开始：我的 → 我发布的 → 一键擦亮");
+
+        ScreenOcr.Snapshot mine = navigateToMineForPolishV448(suPath);
+        if (mine == null || mine.isEmpty()) {
+            listingPolishAttemptedV448 = true;
+            diagnostic("[一键擦亮V4.48.2] 无法安全到达‘我的’页");
+            return false;
+        }
+
+        performListingPolishV448(suPath, mine);
+        return listingPolishSucceededV448;
+    }
+
+    private static ScreenOcr.Snapshot navigateToMineForPolishV448(String suPath) {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            if (userAborted || physicalTouchDetected || !ensureFg(suPath)) {
+                return ScreenOcr.Snapshot.empty();
+            }
+
+            invalidateOcrCacheV411();
+            PageProbeV411 page = probePageV411(
+                    suPath, "一键擦亮/导航我的#" + (attempt + 1));
+
+            if (page.kind == PageKindV411.MINE) {
+                return page.ocr;
+            }
+
+            if (page.kind == PageKindV411.XIANYU_HOME) {
+                diagnostic("[一键擦亮V4.48.2] 首页已确认，点击底部‘我的’");
+                if (!tapByRatioV43(
+                        suPath, 0.885f, 0.950f,
+                        "一键擦亮-首页-我的", true)) {
+                    return ScreenOcr.Snapshot.empty();
+                }
+                if (!paceSleepV415(320L, 500L)) {
+                    return ScreenOcr.Snapshot.empty();
+                }
+                continue;
+            }
+
+            if (page.kind == PageKindV411.COIN_HOME
+                    || page.kind == PageKindV411.TASK_PANEL
+                    || page.kind == PageKindV411.UNKNOWN_XIANYU) {
+                diagnostic("[一键擦亮V4.48.2] 当前页=" + page.kind
+                        + "，返回上一层寻找‘我的’");
+                if (!preferredRightBackOnceV410(
+                        suPath, "一键擦亮导航我的")
+                        || !sleepAbortableV48(480L)) {
+                    return ScreenOcr.Snapshot.empty();
+                }
+                continue;
+            }
+
+            diagnostic("[一键擦亮V4.48.2] 当前页面不允许继续导航：" + page.kind);
+            return ScreenOcr.Snapshot.empty();
+        }
+
+        return ScreenOcr.Snapshot.empty();
     }
 
     /**
-     * V4.48.1 local preflight:
+     * V4.48.2 independent polish card:
      * 我的 -> 我发布的 -> 一键擦亮 -> 返回我的.
      *
      * The action is attempted once per run. It never clicks item-level
@@ -804,6 +855,7 @@ public final class TaskExecutor {
     ) {
         if (listingPolishAttemptedV448) return;
         listingPolishAttemptedV448 = true;
+        listingPolishSucceededV448 = false;
 
         if (userAborted || physicalTouchDetected || !ensureFg(suPath)) return;
 
@@ -884,7 +936,9 @@ public final class TaskExecutor {
         }
 
         if (polished) {
-            diagnostic("[一键擦亮V4.48.1] ✅ 已点击一次‘一键擦亮’；不点击加曝光/降价/编辑");
+            listingPolishSucceededV448 = true;
+            diagnostic("[一键擦亮V4.48.2] ✅ 已点击一次‘一键擦亮’；不点击加曝光/降价/编辑");
+            sendStatus("一键擦亮", "SUCCESS", "已自动点击一次一键擦亮");
             sleepAbortableV48(650L);
         } else {
             diagnostic("[一键擦亮V4.48.1] ⚠️ ‘一键擦亮’点击失败");
@@ -1890,6 +1944,7 @@ public final class TaskExecutor {
 
     private static boolean isCategoryEnabled(Context context, TaskCategory category) {
         switch (category) {
+            case POLISH: return AppConfig.isPolishTaskEnabled(context);
             case LOCAL: return AppConfig.isLocalTaskEnabled(context);
             case VIDEO: return AppConfig.isVideoTaskEnabled(context);
             case JUMP: return AppConfig.isJumpTaskEnabled(context);
