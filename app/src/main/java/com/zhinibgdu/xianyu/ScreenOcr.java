@@ -43,6 +43,26 @@ final class ScreenOcr {
         }
     }
 
+    /** Returns a decoded root screenshot for image-based solvers. The caller owns the Bitmap. */
+    static Bitmap captureBitmap(Context context, String suPath,
+                                RootCommandRunner.Cancellation cancellation) {
+        if (context == null || suPath == null || suPath.trim().isEmpty()) return null;
+        File screenshot = null;
+        try {
+            File dir = context.getExternalFilesDir(null);
+            if (dir == null || (!dir.exists() && !dir.mkdirs())) return null;
+            screenshot = File.createTempFile("xianyu_frame_", ".png", dir);
+            String path = shellQuote(screenshot.getAbsolutePath());
+            if (!RootCommandRunner.run(suPath, "screencap -p " + path + " && chmod 0644 " + path,
+                    ROOT_TIMEOUT_MS, cancellation)) return null;
+            return BitmapFactory.decodeFile(screenshot.getAbsolutePath());
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            safeDelete(screenshot);
+        }
+    }
+
     static synchronized Snapshot capture(Context context, String suPath,
                                          RootCommandRunner.Cancellation cancellation) {
         if (context == null || suPath == null || suPath.trim().isEmpty()) return Snapshot.empty();
