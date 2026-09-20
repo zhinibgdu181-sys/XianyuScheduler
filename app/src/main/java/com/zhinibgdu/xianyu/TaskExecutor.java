@@ -5622,9 +5622,9 @@ public final class TaskExecutor {
             userAborted = true;
             diagnostic("🛑 人工接管，立即停止：" + reason);
             TaskProfileStoreV48.recordFailure("__GLOBAL__", "manual_takeover:" + reason);
-            // Human-learning/replay collection is intentionally disabled.
-            // A physical touch is only a hard takeover signal: stop automation,
-            // do not start a teaching window and do not persist the user's gesture.
+            // A real touch is still an immediate hard stop for automation.
+            // The touch monitor may then passively learn the human continuation;
+            // the learning observer itself never generates input.
         }
     }
 
@@ -6028,8 +6028,8 @@ public final class TaskExecutor {
                         pendingWaitMs = lastGestureEndAt > 0L
                                 ? Math.max(0L, now - lastGestureEndAt)
                                 : 0L;
-                        startX = x == null ? lastX : x;
-                        startY = y == null ? lastY : y;
+                        startX = x == null ? -1 : x;
+                        startY = y == null ? -1 : y;
                         lastX = startX;
                         lastY = startY;
                         trajectory.clear();
@@ -7371,7 +7371,10 @@ public final class TaskExecutor {
         // sample/device is available, keep the existing deterministic command.
         if (command != null && running) {
             RootResult humanized = tryHumanizedInputV450(suPath, command);
-            if (humanized != null) return humanized;
+            if (humanized != null && humanized.exitCode == 0) return humanized;
+            if (humanized != null) {
+                diagnostic("[学习真人V4.50] 真人轨迹注入失败，回退原始 input 命令");
+            }
         }
 
         if (command != null) {
