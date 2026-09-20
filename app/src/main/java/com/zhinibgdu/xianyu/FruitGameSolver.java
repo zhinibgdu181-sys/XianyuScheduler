@@ -457,8 +457,11 @@ public final class FruitGameSolver {
                             + "，剩余=" + remainingBeforeAction + "->"
                             + remainingAfterAction);
                     failedActionKeys.clear();
-                    deadlockSince = 0L;
-                    deadlockTraySignature = "";
+                    if ("TRAY_MATCH".equals(click.reason)
+                            || "DEADLOCK_TRAY_MATCH".equals(click.reason)) {
+                        deadlockSince = 0L;
+                        deadlockTraySignature = "";
+                    }
                     noProgress = 0;
                     routeBroken = true;
                     current = null;
@@ -517,8 +520,10 @@ public final class FruitGameSolver {
                             + "，结构变化=" + structuralChange);
                     current = after;
                     failedActionKeys.clear();
-                    deadlockSince = 0L;
-                    deadlockTraySignature = "";
+                    if (trayMatchStructural) {
+                        deadlockSince = 0L;
+                        deadlockTraySignature = "";
+                    }
                     noProgress = 0;
                     continue;
                 }
