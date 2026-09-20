@@ -275,6 +275,7 @@ final class FruitPlanner {
 
                 if (!reciprocal
                         && !oneWayNearest
+                        && !closeEnough
                         && aMargin < PAIR_AMBIGUITY_MARGIN
                         && bMargin < PAIR_AMBIGUITY_MARGIN) {
                     continue;
