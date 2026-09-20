@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
     private TextView todaySummaryText;
     private TextView todayCompletedText;
     private TextView dataPathText;
-    private Switch localSwitch, videoSwitch, gameSwitch, jumpSwitch;
+    private Switch localSwitch, videoSwitch, jumpSwitch;
     private TextView logText;
     private ScrollView logScroll;
 
@@ -145,17 +145,14 @@ public class MainActivity extends Activity {
         Button copyAllLog = findViewById(R.id.copy_all_log_button);
         localSwitch = findViewById(R.id.switch_local_task);
         videoSwitch = findViewById(R.id.switch_video_task);
-        gameSwitch = findViewById(R.id.switch_game_task);
         jumpSwitch = findViewById(R.id.switch_jump_task);
         localSwitch.setChecked(AppConfig.isLocalTaskEnabled(this));
         videoSwitch.setChecked(AppConfig.isVideoTaskEnabled(this));
-        gameSwitch.setChecked(AppConfig.isGameTaskEnabled(this));
         jumpSwitch.setChecked(AppConfig.isJumpTaskEnabled(this));
         android.widget.CompoundButton.OnCheckedChangeListener save = (button, checked) ->
-                AppConfig.saveTaskSwitches(this, localSwitch.isChecked(), videoSwitch.isChecked(), gameSwitch.isChecked(), jumpSwitch.isChecked());
+                AppConfig.saveTaskSwitches(this, localSwitch.isChecked(), videoSwitch.isChecked(), jumpSwitch.isChecked());
         localSwitch.setOnCheckedChangeListener(save);
         videoSwitch.setOnCheckedChangeListener(save);
-        gameSwitch.setOnCheckedChangeListener(save);
         jumpSwitch.setOnCheckedChangeListener(save);
         Button todayRefresh = findViewById(R.id.today_refresh_button);
         Button showPath = findViewById(R.id.show_path_button);
@@ -550,10 +547,9 @@ public class MainActivity extends Activity {
     private void triggerSelectedTasks() {
         boolean local = localSwitch.isChecked();
         boolean video = videoSwitch.isChecked();
-        boolean game = gameSwitch.isChecked();
         boolean jump = jumpSwitch.isChecked();
 
-        if (!local && !video && !game && !jump) {
+        if (!local && !video && !jump) {
             setStatusMessage("当前任务开关均已关闭。请至少开启一个任务后再点击“执行任务”。");
             Toast.makeText(this, "请至少开启一个任务", Toast.LENGTH_SHORT).show();
             return;
@@ -565,18 +561,11 @@ public class MainActivity extends Activity {
             if (selected.length() > 0) selected.append("、");
             selected.append("视频任务");
         }
-        if (game) {
-            if (selected.length() > 0) selected.append("、");
-            selected.append("小游戏任务");
-        }
         if (jump) {
             if (selected.length() > 0) selected.append("、");
             selected.append("跳转任务");
         }
 
-        // 手动点击“执行任务”时，必须严格按照当前开关启动对应分类。
-        // 特别是只开启“视频任务”时不能再传 ALL，否则调度器可能依据旧配置
-        // 继续进入“闲鱼本地任务”。
         TaskCategory selectedCategory = null;
         int selectedCount = 0;
         if (local) {
@@ -585,10 +574,6 @@ public class MainActivity extends Activity {
         }
         if (video) {
             selectedCategory = TaskCategory.VIDEO;
-            selectedCount++;
-        }
-        if (game) {
-            selectedCategory = TaskCategory.GAME;
             selectedCount++;
         }
         if (jump) {
