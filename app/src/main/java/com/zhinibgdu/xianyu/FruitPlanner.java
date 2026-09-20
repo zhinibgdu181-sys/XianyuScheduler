@@ -59,37 +59,6 @@ final class FruitPlanner {
             }
         }
 
-        // A missing pair is NOT permission to click a board coordinate as UNLOCK.
-        // The live log showed repeated taps at the same coordinate while OCR stayed
-        // at 剩余202. That is a false action caused by an untrusted vision state.
-        // Real unlock handling must be driven by an explicitly detected unlock
-        // control/popup, not by a fruit candidate chosen here.
-        if (false && state.trayCount() < 3) {
-            FruitBoardState.Fruit bestFruit = null;
-            double bestScore = -Double.MAX_VALUE;
-            for (FruitBoardState.Fruit fruit : state.boardFruits) {
-                double access = clickability(state, fruit);
-                if (access < 0.25) continue;
-
-                int overlap = overlapCount(state, fruit);
-                int future = futurePairCount(state, fruit);
-                double score = 0.56 * access
-                        + 0.30 * Math.min(1.0, overlap / 3.0)
-                        + 0.14 * Math.min(1.0, future / 2.0);
-                if (matchesTray(state, fruit)) score += 0.25;
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestFruit = fruit;
-                }
-            }
-
-            if (bestFruit != null) {
-                List<Click> clicks = new ArrayList<>();
-                clicks.add(new Click(bestFruit.centerX, bestFruit.centerY, "UNLOCK"));
-                return new Plan(clicks, bestScore, "无即时配对，执行一次解锁后重识别");
-            }
-        }
 
         return Plan.empty();
     }
