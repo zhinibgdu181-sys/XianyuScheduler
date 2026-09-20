@@ -271,8 +271,12 @@ public final class FruitGameSolver {
     }
 
     public static boolean looksLikeFruitStartScreen(String text) {
-        return looksLikeFruitGame(text)
-                || (text != null && containsAny(text, "开始", "进入游戏", "再来一局"));
+        if (text == null) return false;
+        String normalized = text.replace(" ", "");
+        boolean fruitContext = containsAny(normalized,
+                "水果", "二消", "果盘", "槽位", "消除水果", "去消了还想消");
+        return fruitContext
+                && containsAny(normalized, "开始", "进入游戏", "再来一局", "开始游戏", "继续");
     }
 
     public static boolean looksLikeFailedRound(String text) {
