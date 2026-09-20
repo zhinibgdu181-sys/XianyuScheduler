@@ -16,14 +16,55 @@ import java.util.Set;
  * permission to blindly click stale coordinates.
  */
 final class FruitPlanner {
-    private static final double PAIR_MAX_DISTANCE = 0.24;
-    private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.13;
-    private static final double PAIR_AMBIGUITY_MARGIN = 0.015;
-    private static final double PAIR_RESCUE_MAX_DISTANCE = 0.38;
+    private static final double PAIR_MAX_DISTANCE = 0.32;
+    private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.18;
+    private static final double PAIR_AMBIGUITY_MARGIN = 0.012;
+    private static final double PAIR_RESCUE_MAX_DISTANCE = 0.50;
     private static final int MAX_SEARCH_DEPTH = 14;
-    private static final long SEARCH_BUDGET_MS = 220L;
+    private static final long SEARCH_BUDGET_MS = 280L;
 
     private FruitPlanner() {}
+
+    static String diagnosticSummary(FruitBoardState state) {
+        if (state == null || state.boardFruits.isEmpty()) {
+            return "objects=0 normalPairs=0 rescuePairs=0 minNearest=NA";
+        }
+        int normal = 0;
+        int rescue = 0;
+        double minNearest = Double.MAX_VALUE;
+        double sumNearest = 0.0;
+        int nearestSamples = 0;
+
+        for (int i = 0; i < state.boardFruits.size(); i++) {
+            FruitBoardState.Fruit a = state.boardFruits.get(i);
+            double nearest = Double.MAX_VALUE;
+            for (int j = 0; j < state.boardFruits.size(); j++) {
+                if (i == j) continue;
+                double d = a.similarityDistance(state.boardFruits.get(j));
+                nearest = Math.min(nearest, d);
+                if (j > i) {
+                    if (d <= PAIR_MAX_DISTANCE) normal++;
+                    if (d <= PAIR_RESCUE_MAX_DISTANCE) rescue++;
+                }
+            }
+            if (nearest < Double.MAX_VALUE) {
+                minNearest = Math.min(minNearest, nearest);
+                sumNearest += nearest;
+                nearestSamples++;
+            }
+        }
+
+        String minText = minNearest == Double.MAX_VALUE
+                ? "NA" : String.format(java.util.Locale.US, "%.3f", minNearest);
+        String avgText = nearestSamples == 0
+                ? "NA" : String.format(java.util.Locale.US, "%.3f", sumNearest / nearestSamples);
+        return "objects=" + state.boardFruits.size()
+                + " tray=" + state.trayCount()
+                + " normalPairs=" + normal
+                + " rescuePairs=" + rescue
+                + " minNearest=" + minText
+                + " avgNearest=" + avgText;
+    }
 
     static Plan plan(FruitBoardState state) {
         if (state == null || state.boardFruits.isEmpty()) return Plan.empty();

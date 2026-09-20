@@ -245,7 +245,6 @@ public final class TaskExecutor {
         stopHumanTeachingCaptureV464();
         stopHumanOperationTeachingV467();
         stopPhysicalTouchMonitorV48();
-        diagnostic("[真人经验V4.66] 前台服务已销毁，立即停止真人教学观察");
     }
 
     public static void run(Context context) { run(context, null); }
@@ -5164,17 +5163,11 @@ public final class TaskExecutor {
     private static void markUserAbortV48(String reason) {
         if (!userAborted) {
             userAborted = true;
-            if (!TeachingOutcomeStore.hasSession()) {
-                TeachingOutcomeStore.begin(
-                        lastContext, currentExecutingTaskV464, "MANUAL_TAKEOVER");
-            }
             diagnostic("🛑 人工接管，立即停止：" + reason);
             TaskProfileStoreV48.recordFailure("__GLOBAL__", "manual_takeover:" + reason);
-            // V4.67: all task categories enter the same passive human-operation
-            // teaching window. Fruit keeps its structural OCR learner; the generic
-            // observer additionally records real tap/swipe geometry and timing.
-            startHumanOperationTeachingV467();
-            startHumanTeachingCaptureV464();
+            // Human-learning/replay collection is intentionally disabled.
+            // A physical touch is only a hard takeover signal: stop automation,
+            // do not start a teaching window and do not persist the user's gesture.
         }
     }
 
@@ -5552,31 +5545,17 @@ public final class TaskExecutor {
                             continue;
                         }
 
-                        // WAIT is committed only when this physical gesture is
-                        // successfully completed. This prevents a duplicate/partial DOWN
-                        // from creating multiple WAIT records for one real action.
-                        pendingWaitMs = lastGestureEndAt > 0L && now > lastGestureEndAt
-                                ? now - lastGestureEndAt : 0L;
-
                         physicalTouchDetected = true;
                         physicalTouchAt = now;
                         if (!userAborted) {
                             markUserAbortV48("检测到真实手指触摸屏幕");
-                            diagnostic("[人工检测V4.70] 首次真实触摸已触发人工接管；继续保留监听等待后续真人操作");
+                            diagnostic("[人工检测] 已停止自动化；不记录、不学习、不回放真人手势");
                         }
 
-                        gestureActive = true;
-                        downAt = now;
-                        startX = x == null ? lastX : x;
-                        startY = y == null ? lastY : y;
-                        lastX = startX;
-                        lastY = startY;
-                        pathDistance = 0f;
-                        trajectory.clear();
-                        if (startX >= 0 && startY >= 0) {
-                            appendGesturePointV472(trajectory, startX, startY);
-                        }
-                        continue;
+                        // Takeover is terminal for this monitor session. Do not wait
+                        // for TOUCH_UP and do not feed the gesture into any experience
+                        // store. The service/finally path will dispose the reader.
+                        break;
                     }
 
                     if (gestureActive && touchUp) {

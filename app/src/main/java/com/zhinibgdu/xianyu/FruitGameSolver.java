@@ -202,6 +202,7 @@ public final class FruitGameSolver {
                 if (!frame.isRecycled()) frame.recycle();
             }
 
+            host.log("[水果识别诊断] " + FruitPlanner.diagnosticSummary(current));
             FruitPlanner.Plan plan = FruitPlanner.plan(current);
             host.log(String.format(
                     Locale.US,
@@ -224,7 +225,8 @@ public final class FruitGameSolver {
                 }
 
                 if (++noProgress >= MAX_NO_PROGRESS) {
-                    host.log("[水果新求解器] 连续无安全动作，结束本轮并保留现场");
+                    host.log("[水果新求解器] 连续无安全动作，结束本轮并保留现场；"
+                            + FruitPlanner.diagnosticSummary(current));
                     return Result.SAFE_STOP_DIRTY;
                 }
 
@@ -413,8 +415,8 @@ public final class FruitGameSolver {
         // Keep well inside the blue playfield and outside the lower game controls.
         int left = Math.round(state.width * 0.10f);
         int right = Math.round(state.width * 0.90f);
-        int top = Math.round(state.height * 0.22f);
-        int bottom = Math.round(state.height * 0.72f);
+        int top = Math.round(state.height * 0.08f);
+        int bottom = Math.round(state.height * 0.58f);
 
         for (int gy = 0; gy < 7; gy++) {
             int y = top + Math.round((bottom - top) * gy / 6.0f);

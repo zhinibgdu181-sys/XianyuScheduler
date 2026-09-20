@@ -19,10 +19,16 @@ import java.util.List;
  */
 final class FruitVisionEngine {
     private static final int SAMPLE_STEP = 5;
-    private static final float BOARD_TOP = 0.16f;
-    private static final float BOARD_BOTTOM = 0.82f;
-    private static final float TRAY_TOP = 0.82f;
-    private static final float TRAY_BOTTOM = 0.91f;
+    // Real-game calibration from the 1440x3120 / 1080x2340 captures:
+    // fruits can touch the very top of the game surface, while the collector is
+    // around the central roof opening. The previous 0.16..0.82 board ROI missed
+    // top fruits and treated lower UI/decorations as tray contents.
+    private static final float BOARD_TOP = 0.00f;
+    private static final float BOARD_BOTTOM = 0.60f;
+    private static final float TRAY_TOP = 0.60f;
+    private static final float TRAY_BOTTOM = 0.70f;
+    private static final float TRAY_LEFT = 0.30f;
+    private static final float TRAY_RIGHT = 0.70f;
 
     private FruitVisionEngine() {}
 
@@ -42,17 +48,25 @@ final class FruitVisionEngine {
                 5000
         );
 
-        List<FruitBoardState.Fruit> tray = detectRegion(
+        List<FruitBoardState.Fruit> trayRaw = detectRegion(
                 source,
                 Math.round(source.getHeight() * TRAY_TOP),
                 Math.round(source.getHeight() * TRAY_BOTTOM),
                 5,
                 1800
         );
+        List<FruitBoardState.Fruit> tray = new ArrayList<>();
+        int trayLeft = Math.round(source.getWidth() * TRAY_LEFT);
+        int trayRight = Math.round(source.getWidth() * TRAY_RIGHT);
+        for (FruitBoardState.Fruit fruit : trayRaw) {
+            if (fruit.centerX >= trayLeft && fruit.centerX <= trayRight) {
+                tray.add(fruit);
+            }
+        }
 
-        if (tray.size() > 3) {
+        if (tray.size() > 4) {
             tray.sort((a, b) -> Integer.compare(b.pixelArea, a.pixelArea));
-            tray = new ArrayList<>(tray.subList(0, 3));
+            tray = new ArrayList<>(tray.subList(0, 4));
         }
 
         return new FruitBoardState(
@@ -485,6 +499,13 @@ final class FruitVisionEngine {
         if (max < 70 || delta < 34) return false;
         if (r > 228 && g > 228 && b > 228) return false;
         if (Math.abs(r - g) < 8 && Math.abs(g - b) < 8) return false;
+
+        // Reject the bright cyan sky/playfield. This background dominated the
+        // old connected-component mask and forced the seed fallback to invent
+        // many false fruit observations. Dark saturated blue fruit still pass.
+        if (b >= 165 && g >= 130 && b > g + 8 && g > r + 18 && max >= 185) {
+            return false;
+        }
 
         return true;
     }
