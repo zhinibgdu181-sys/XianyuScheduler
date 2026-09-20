@@ -47,6 +47,12 @@ final class GameTapPolicy {
                 || "IDLE_BLANK_SWIPE".equals(reason)) {
             return nx >= .08 && nx <= .92 && ny >= .08 && ny <= .58;
         }
+        if ("WALL_KEEPALIVE_TAP".equals(reason)
+                || "WALL_KEEPALIVE_SWIPE".equals(reason)) {
+            boolean leftWall = nx >= .14 && nx <= .34;
+            boolean rightWall = nx >= .67 && nx <= .86;
+            return (leftWall || rightWall) && ny >= .74 && ny <= .84;
+        }
         return false;
     }
 }
