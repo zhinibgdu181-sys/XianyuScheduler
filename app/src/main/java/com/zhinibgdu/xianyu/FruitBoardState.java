@@ -54,10 +54,26 @@ final class FruitBoardState {
         final int centerX, centerY, left, top, right, bottom, pixelArea;
         final float meanR, meanG, meanB, meanHue, saturation, value;
         final float[] hueHistogram;
+        /**
+         * Compact local appearance fingerprint sampled around the fruit center.
+         * Each cell stores normalized RGB. This is intentionally small so it can
+         * be compared on-device without OpenCV/native dependencies.
+         */
+        final float[] visualGrid;
 
         Fruit(int centerX, int centerY, int left, int top, int right, int bottom,
               int pixelArea, float meanR, float meanG, float meanB,
               float meanHue, float saturation, float value, float[] hueHistogram) {
+            this(centerX, centerY, left, top, right, bottom, pixelArea,
+                    meanR, meanG, meanB, meanHue, saturation, value,
+                    hueHistogram, null);
+        }
+
+        Fruit(
+                int centerX, int centerY, int left, int top, int right, int bottom,
+                int pixelArea, float meanR, float meanG, float meanB,
+                float meanHue, float saturation, float value,
+                float[] hueHistogram, float[] visualGrid) {
             this.centerX = centerX;
             this.centerY = centerY;
             this.left = left;
@@ -72,6 +88,7 @@ final class FruitBoardState {
             this.saturation = saturation;
             this.value = value;
             this.hueHistogram = hueHistogram == null ? new float[12] : hueHistogram.clone();
+            this.visualGrid = visualGrid == null ? new float[0] : visualGrid.clone();
         }
 
         int width() { return Math.max(1, right - left); }
@@ -104,15 +121,39 @@ final class FruitBoardState {
             double aspect = Math.min(1.0,
                     Math.abs(aspectRatio() - other.aspectRatio()) * 0.50);
 
-            // Local seed patches can contain neighbouring fruits. Identity must
-            // therefore depend more on hue distribution, size and shape than the
-            // previous broad mean-colour metric.
+            double grid = visualGridDistance(other);
+
+            // The local visual fingerprint is the strongest identity signal.
+            // Mean colour/hue remain useful as a fallback for frames where the
+            // patch could not be sampled.
+            if (visualGrid.length > 0 && other.visualGrid.length == visualGrid.length) {
+                return 0.40 * grid
+                        + 0.18 * rgb
+                        + 0.12 * hue
+                        + 0.08 * sv
+                        + 0.14 * hist
+                        + 0.05 * areaRatio
+                        + 0.03 * aspect;
+            }
+
             return 0.25 * rgb
                     + 0.22 * hue
                     + 0.15 * sv
                     + 0.28 * hist
                     + 0.06 * areaRatio
                     + 0.04 * aspect;
+        }
+
+        private double visualGridDistance(Fruit other) {
+            if (other == null || visualGrid.length == 0
+                    || other.visualGrid.length != visualGrid.length) {
+                return 1.0;
+            }
+            double total = 0.0;
+            for (int i = 0; i < visualGrid.length; i++) {
+                total += Math.abs(visualGrid[i] - other.visualGrid[i]);
+            }
+            return Math.min(1.0, total / visualGrid.length);
         }
 
         double similarityDistance(Fruit other) { return colorDistance(other); }
