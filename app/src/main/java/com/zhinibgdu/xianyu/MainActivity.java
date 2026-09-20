@@ -73,6 +73,7 @@ public class MainActivity extends Activity {
     private int selectedBottomTab = 0;
     private String selectedRecordDate;
 
+    private LinearLayout humanLearningCard;
     private LinearLayout rootPermissionCard;
     private LinearLayout alarmPermissionCard;
     private TextView rootPermissionIcon;
@@ -88,7 +89,8 @@ public class MainActivity extends Activity {
         public void run() {
             showStatus(false);
             refreshTodayCompleted();
-            if (TaskExecutor.isRunning()) {
+            if (TaskExecutor.isRunning()
+                    || TaskExecutor.isStandaloneHumanLearningV450()) {
                 handler.postDelayed(this, 1500L);
             }
         }
@@ -129,6 +131,7 @@ public class MainActivity extends Activity {
         navAutomationText = findViewById(R.id.nav_automation_text);
         navLogsText = findViewById(R.id.nav_logs_text);
 
+        humanLearningCard = findViewById(R.id.human_learning_card);
         rootPermissionCard = findViewById(R.id.root_permission_card);
         alarmPermissionCard = findViewById(R.id.alarm_permission_card);
         rootPermissionIcon = findViewById(R.id.root_permission_icon);
@@ -180,6 +183,8 @@ public class MainActivity extends Activity {
         navAutomation.setOnClickListener(v -> selectBottomTab(2));
         navLogs.setOnClickListener(v -> selectBottomTab(3));
         selectBottomTab(0);
+
+        humanLearningCard.setOnClickListener(v -> toggleHumanLearningV450());
 
         rootPermissionCard.setOnClickListener(v -> {
             setStatusMessage(
@@ -615,6 +620,9 @@ public class MainActivity extends Activity {
     }
 
     private void triggerXianyuTask(TaskCategory category) {
+        if (TaskExecutor.isStandaloneHumanLearningV450()) {
+            HumanLearningForegroundService.stop(getApplicationContext());
+        }
         if (TaskExecutor.isRunning()) {
             Toast.makeText(this, "当前任务正在运行，请等待当前任务完成", Toast.LENGTH_SHORT).show();
             return;
@@ -768,14 +776,50 @@ public class MainActivity extends Activity {
 
     private void setRuntimeState(boolean running) {
         if (running) {
-            runtimeStatusText.setText(TaskExecutor.getActiveCategoryLabel() + "运行中");
+            runtimeStatusText.setText("任务运行中");
             runtimeStatusText.setTextColor(0xFF1D4ED8);
             runtimeStatusText.setBackgroundResource(R.drawable.bg_status_running);
+            setStatusMessage(TaskExecutor.getActiveCategoryLabel()
+                    + "正在执行。学习真人会暂停，避免把程序触摸误学成真人。");
+        } else if (TaskExecutor.isStandaloneHumanLearningV450()) {
+            runtimeStatusText.setText("学习中");
+            runtimeStatusText.setTextColor(0xFF1D4ED8);
+            runtimeStatusText.setBackgroundResource(R.drawable.bg_status_running);
+            setStatusMessage(TaskExecutor.getHumanLearningSummaryV450(this)
+                    + "\n只记录闲鱼前台的真实手指操作；点击此卡片可停止学习。");
         } else {
-            runtimeStatusText.setText("空闲");
+            runtimeStatusText.setText("点击开始");
             runtimeStatusText.setTextColor(0xFF166534);
             runtimeStatusText.setBackgroundResource(R.drawable.bg_status_idle);
+            setStatusMessage(TaskExecutor.getHumanLearningSummaryV450(this)
+                    + "\n点击此卡片开始学习；进入闲鱼后正常手动点击、滑动即可。");
         }
+    }
+
+    private void toggleHumanLearningV450() {
+        if (TaskExecutor.isRunning()) {
+            setStatusMessage("自动任务正在运行。请等任务结束后再开始学习真人操作。");
+            Toast.makeText(this, "任务运行中，暂不能学习", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (TaskExecutor.isStandaloneHumanLearningV450()) {
+            HumanLearningForegroundService.stop(getApplicationContext());
+            setStatusMessage("正在停止学习真人操作……");
+            handler.postDelayed(() -> {
+                setRuntimeState(false);
+                showStatus(false);
+            }, 500L);
+            return;
+        }
+
+        HumanLearningForegroundService.start(getApplicationContext());
+        runtimeStatusText.setText("启动中");
+        runtimeStatusText.setTextColor(0xFF1D4ED8);
+        runtimeStatusText.setBackgroundResource(R.drawable.bg_status_running);
+        setStatusMessage("正在启动学习真人……\n启动后请切到闲鱼，按你平时的方式点击和滑动。");
+        handler.removeCallbacks(runningRefresh);
+        handler.postDelayed(runningRefresh, 800L);
     }
 
     private void showStatus(boolean userRequested) {
@@ -790,10 +834,14 @@ public class MainActivity extends Activity {
 
         if (running) {
             setStatusMessage(TaskExecutor.getActiveCategoryLabel() + "正在执行 · 日志会自动刷新。\n"
-                    + "切回本助手或任务完成后会自动停止操作。");
+                    + "学习真人已暂停，避免误学程序产生的点击/滑动。");
+        } else if (TaskExecutor.isStandaloneHumanLearningV450()) {
+            setStatusMessage(TaskExecutor.getHumanLearningSummaryV450(this)
+                    + "\n学习中：只记录闲鱼前台真实手指操作；点击“学习真人”卡片可停止。");
         } else if (userRequested) {
             setStatusMessage("日志已刷新 · "
-                    + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date()));
+                    + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date())
+                    + "\n" + TaskExecutor.getHumanLearningSummaryV450(this));
         }
 
         logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
