@@ -50,9 +50,12 @@ final class FruitPlanner {
             }
         }
 
-        // No pair is currently visible. Select one safe unlock move and force a
-        // fresh observation after it; never guess a long route through unknown state.
-        if (state.trayCount() < 3) {
+        // A missing pair is NOT permission to click a board coordinate as UNLOCK.
+        // The live log showed repeated taps at the same coordinate while OCR stayed
+        // at 剩余202. That is a false action caused by an untrusted vision state.
+        // Real unlock handling must be driven by an explicitly detected unlock
+        // control/popup, not by a fruit candidate chosen here.
+        if (false && state.trayCount() < 3) {
             FruitBoardState.Fruit bestFruit = null;
             double bestScore = -Double.MAX_VALUE;
             for (FruitBoardState.Fruit fruit : state.boardFruits) {
