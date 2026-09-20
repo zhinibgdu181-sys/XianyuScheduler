@@ -113,10 +113,14 @@ public final class FruitGameSolver {
                 nextUiProbe = now + UI_PROBE_INTERVAL_MS;
                 if (ui == UiDecision.COMPLETED) return Result.COMPLETED;
                 if (ui == UiDecision.FAILED) return Result.GAME_FAILED;
-                if (ui == UiDecision.POPUP_CLOSED) {
-                    // Popup close changes the frame; immediately rebuild without
-                    // consuming a no-progress retry.
+                if (ui == UiDecision.LEFT_GAME) return Result.NOT_FRUIT_GAME;
+                if (ui == UiDecision.PAGE_CHANGED || ui == UiDecision.POPUP_CLOSED) {
+                    // Modal/start/revive actions change the frame. Never run
+                    // fruit vision against the stale modal image.
                     replanCount++;
+                    noProgress = 0;
+                    host.sleep(220L, 360L);
+                    continue;
                 }
             }
 
@@ -145,8 +149,7 @@ public final class FruitGameSolver {
                         return Result.GAME_FAILED;
                     }
                     if (finalOcr != null && !finalOcr.isEmpty()
-                            && containsAny(finalOcr.fullText,
-                            "完成", "已完成", "任务完成", "下一关", "继续")) {
+                            && looksLikeCompletedRoundText(finalOcr.fullText)) {
                         return Result.COMPLETED;
                     }
                 }
@@ -155,8 +158,7 @@ public final class FruitGameSolver {
                     ScreenOcr.Snapshot emptyCheck = host.ocr("水果空板确认");
                     if (emptyCheck != null && !emptyCheck.isEmpty()) {
                         if (looksLikeFailedRound(emptyCheck.fullText)) return Result.GAME_FAILED;
-                        if (containsAny(emptyCheck.fullText,
-                                "完成", "已完成", "任务完成", "下一关", "继续")) {
+                        if (looksLikeCompletedRoundText(emptyCheck.fullText)) {
                             return Result.COMPLETED;
                         }
                     }
@@ -218,8 +220,11 @@ public final class FruitGameSolver {
                 ScreenOcr.Snapshot stuck = host.ocr("水果无安全动作确认");
                 if (stuck != null && !stuck.isEmpty()) {
                     if (looksLikeFailedRound(stuck.fullText)) return Result.GAME_FAILED;
-                    if (containsAny(stuck.fullText,
-                            "完成", "已完成", "任务完成", "下一关")) {
+                    if (looksLikeTaskPanelText(stuck.fullText)) {
+                        host.log("[水果页面守卫] 已离开游戏回到任务面板，停止水果视觉求解");
+                        return Result.NOT_FRUIT_GAME;
+                    }
+                    if (looksLikeCompletedRoundText(stuck.fullText)) {
                         return Result.COMPLETED;
                     }
                 }
@@ -270,6 +275,22 @@ public final class FruitGameSolver {
              */
             boolean routeBroken = false;
             ScreenOcr.Snapshot beforeActionOcr = host.ocr("水果配对前剩余数");
+            if (beforeActionOcr != null && !beforeActionOcr.isEmpty()) {
+                String beforeText = beforeActionOcr.fullText;
+                if (looksLikeTaskPanelText(beforeText)) {
+                    host.log("[水果页面守卫] 执行动作前已检测到任务面板，禁止继续点击");
+                    return Result.NOT_FRUIT_GAME;
+                }
+                if (looksLikeLeaveConfirmation(beforeText)
+                        || looksLikeRevivePopup(beforeText)
+                        || looksLikeFruitStartScreen(beforeText)
+                        || looksLikeBlockingFunctionPopupText(beforeText)) {
+                    host.log("[水果页面守卫] 执行动作前出现非棋盘UI，重新交给UI状态机处理");
+                    noProgress = 0;
+                    nextUiProbe = 0L;
+                    continue;
+                }
+            }
             int remainingBeforeAction = extractRemainingCount(
                     beforeActionOcr == null ? "" : beforeActionOcr.fullText
             );
@@ -353,6 +374,23 @@ public final class FruitGameSolver {
                 int structuralChange = current.fingerprintChangesAgainst(after);
 
                 ScreenOcr.Snapshot afterActionOcr = host.ocr("水果配对后剩余数");
+                if (afterActionOcr != null && !afterActionOcr.isEmpty()) {
+                    String afterText = afterActionOcr.fullText;
+                    if (looksLikeTaskPanelText(afterText)) {
+                        host.log("[水果页面守卫] 点击后页面已回任务面板，停止把任务面板识别成水果");
+                        return Result.NOT_FRUIT_GAME;
+                    }
+                    if (looksLikeLeaveConfirmation(afterText)
+                            || looksLikeRevivePopup(afterText)
+                            || looksLikeFruitStartScreen(afterText)
+                            || looksLikeBlockingFunctionPopupText(afterText)) {
+                        host.log("[水果页面守卫] 点击后出现弹窗/开始页，废弃视觉结果并重新处理UI");
+                        routeBroken = true;
+                        noProgress = 0;
+                        nextUiProbe = 0L;
+                        break;
+                    }
+                }
                 int remainingAfterAction = extractRemainingCount(
                         afterActionOcr == null ? "" : afterActionOcr.fullText
                 );
@@ -466,8 +504,38 @@ public final class FruitGameSolver {
         String normalized = text.replace(" ", "");
         boolean fruitContext = containsAny(normalized,
                 "水果", "二消", "果盘", "槽位", "消除水果", "去消了还想消");
-        return fruitContext
-                && containsAny(normalized, "开始", "进入游戏", "再来一局", "开始游戏", "继续");
+        boolean versionedGameScreen = normalized.contains("VERSION")
+                && normalized.contains("第1关");
+        return (fruitContext || versionedGameScreen)
+                && containsAny(normalized, "开始游戏", "进入游戏", "再来一局");
+    }
+
+    private static boolean looksLikeLeaveConfirmation(String text) {
+        if (text == null) return false;
+        String normalized = text.replace(" ", "");
+        return normalized.contains("再玩1关游戏")
+                && normalized.contains("继续玩")
+                && containsAny(normalized, "残忍离开", "现在离开任务");
+    }
+
+    private static boolean looksLikeTaskPanelText(String text) {
+        if (text == null) return false;
+        String normalized = text.replace(" ", "");
+        return normalized.contains("去完成")
+                && normalized.contains("看15秒视频")
+                && (normalized.contains("妈蚁庄园")
+                || normalized.contains("芭芭农场")
+                || normalized.contains("收益+10%"));
+    }
+
+    private static boolean looksLikeCompletedRoundText(String text) {
+        if (text == null) return false;
+        String normalized = text.replace(" ", "");
+        if (normalized.contains("去完成") || normalized.contains("即可完成任务")) {
+            return false;
+        }
+        return containsAny(normalized,
+                "任务完成", "已完成", "恭喜过关", "过关成功", "下一关");
     }
 
     public static boolean looksLikeFailedRound(String text) {
@@ -569,33 +637,68 @@ public final class FruitGameSolver {
         if (snapshot == null || snapshot.isEmpty()) return UiDecision.NONE;
 
         String text = snapshot.fullText;
+
+        // Strong page guards must run before generic words like “完成/继续”.
+        if (looksLikeTaskPanelText(text)) {
+            host.log("[水果页面守卫] OCR确认已回任务面板");
+            return UiDecision.LEFT_GAME;
+        }
         if (looksLikeFailedRound(text)) return UiDecision.FAILED;
-        if (containsAny(text, "任务完成", "已完成", "下一关", "恭喜完成")) {
-            return UiDecision.COMPLETED;
+        if (looksLikeCompletedRoundText(text)) return UiDecision.COMPLETED;
+
+        if (looksLikeLeaveConfirmation(text)) {
+            ScreenOcr.Item item = findTextCandidate(snapshot, "继续玩");
+            if (item != null && host.tap(
+                    item.centerX(), item.centerY(), "FRUIT_UI_CONTINUE")) {
+                host.log("[水果UI] 离开确认弹窗 → 点击‘继续玩’");
+                return UiDecision.PAGE_CHANGED;
+            }
+            host.log("[水果UI] 检测到离开确认弹窗，但未取得可靠‘继续玩’坐标");
+            return UiDecision.NONE;
+        }
+
+        if (looksLikeRevivePopup(text)
+                && text.contains("还剩")
+                && containsAny(text, "过关", "复活吗")) {
+            ScreenOcr.Item item = findTextCandidate(snapshot, "复活");
+            if (item != null && host.tap(
+                    item.centerX(), item.centerY(), "FRUIT_UI_REVIVE")) {
+                host.log("[水果UI] 失败/复活弹窗 → 点击‘复活’");
+                return UiDecision.PAGE_CHANGED;
+            }
+            host.log("[水果UI] 检测到复活弹窗，但未取得可靠‘复活’坐标");
+            return UiDecision.NONE;
+        }
+
+        if (looksLikeFruitStartScreen(text)) {
+            ScreenOcr.Item item = findTextCandidate(snapshot, "开始游戏", "进入游戏");
+            if (item != null && host.tap(
+                    item.centerX(), item.centerY(), "水果游戏-开始游戏")) {
+                host.log("[水果UI] 开始页 → 点击‘开始游戏’");
+                return UiDecision.PAGE_CHANGED;
+            }
+            host.log("[水果UI] 检测到开始页，但未取得可靠开始按钮坐标");
+            return UiDecision.NONE;
         }
 
         boolean popupEvidence = looksLikeBlockingFunctionPopupText(text)
-                || looksLikeRevivePopup(text)
-                || containsAny(text, "关闭", "×", "取消", "知道了",
-                "广告", "广告加载", "跳过广告", "激励视频", "道具弹窗");
+                || containsAny(text, "开局消除多组水果", "开局消除多組水果",
+                "购买道具", "道具已获得", "广告加载", "激励视频");
         if (popupEvidence) {
             ScreenOcr.Item close = findCloseCandidate(snapshot);
             if (close != null) {
                 if (host.tap(close.centerX(), close.centerY(), "POPUP_CLOSE")) {
-                    host.log("[水果弹窗] 已关闭识别到的关闭控件；900ms后再次检查");
+                    host.log("[水果弹窗] 已关闭明确识别到的关闭控件");
                     return UiDecision.POPUP_CLOSED;
                 }
             }
 
-            // The ad close glyph is frequently rendered without useful OCR text.
-            // Only use this coordinate fallback when OCR already proves that a
-            // blocking/ad layer exists. Never tap the corner on a normal board.
             int closeX = Math.round(snapshot.width * 0.94f);
             int closeY = Math.round(snapshot.height * 0.08f);
             if (GameTapPolicy.allows(closeX, closeY, snapshot.width, snapshot.height,
                     "POPUP_CLOSE_TOP_RIGHT")) {
                 if (host.tap(closeX, closeY, "POPUP_CLOSE_TOP_RIGHT")) {
-                    host.log("[水果弹窗] OCR确认广告/弹窗但未识别关闭文字；尝试右上角关闭");
+                    host.log("[水果弹窗] OCR确认阻塞层但关闭字符不可读；尝试右上角关闭");
                     return UiDecision.POPUP_CLOSED;
                 }
             }
@@ -604,27 +707,60 @@ public final class FruitGameSolver {
         return UiDecision.NONE;
     }
 
-    private static ScreenOcr.Item findCloseCandidate(ScreenOcr.Snapshot snapshot) {
+    private static ScreenOcr.Item findTextCandidate(
+            ScreenOcr.Snapshot snapshot,
+            String... values
+    ) {
         ScreenOcr.Item best = null;
         int bestScore = Integer.MIN_VALUE;
         for (ScreenOcr.Item item : snapshot.items) {
-            String t = item.text == null ? "" : item.text;
-            int score = 0;
-            if (t.contains("关闭")) score += 100;
-            if (t.contains("取消")) score += 70;
-            if (t.contains("知道")) score += 60;
-            if (t.contains("×") || t.equalsIgnoreCase("x")) score += 90;
-            // Strongly prefer the actual ad-close area in the upper-right.
-            if (item.centerX() > snapshot.width * 0.82
-                    && item.centerY() < snapshot.height * 0.18) score += 100;
-            else if (item.centerX() > snapshot.width * 0.78) score += 25;
-            if (item.centerY() < snapshot.height * 0.40) score += 15;
+            String t = item.text == null ? "" : item.text.replace(" ", "");
+            boolean matched = false;
+            for (String value : values) {
+                if (value != null && !value.isEmpty() && t.contains(value)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) continue;
+
+            int score = 100;
+            // Real modal/start buttons are normally in the central/lower area.
+            if (item.centerX() > snapshot.width * 0.18
+                    && item.centerX() < snapshot.width * 0.82) score += 30;
+            if (item.centerY() > snapshot.height * 0.35
+                    && item.centerY() < snapshot.height * 0.92) score += 30;
             if (score > bestScore) {
                 bestScore = score;
                 best = item;
             }
         }
-        return bestScore > 0 ? best : null;
+        return best;
+    }
+
+    private static ScreenOcr.Item findCloseCandidate(ScreenOcr.Snapshot snapshot) {
+        ScreenOcr.Item best = null;
+        int bestScore = Integer.MIN_VALUE;
+        for (ScreenOcr.Item item : snapshot.items) {
+            String t = item.text == null ? "" : item.text.trim();
+            boolean explicitClose = t.contains("关闭")
+                    || t.contains("取消")
+                    || t.contains("知道")
+                    || t.contains("×")
+                    || t.equalsIgnoreCase("x");
+            if (!explicitClose) continue;
+
+            int score = 100;
+            if (item.centerX() > snapshot.width * 0.78) score += 30;
+            if (item.centerY() < snapshot.height * 0.35) score += 30;
+            if (item.centerX() > snapshot.width * 0.82
+                    && item.centerY() < snapshot.height * 0.18) score += 60;
+            if (score > bestScore) {
+                bestScore = score;
+                best = item;
+            }
+        }
+        return best;
     }
 
     private static boolean looksLikeRoundComplete(FruitBoardState state) {
@@ -662,8 +798,9 @@ public final class FruitGameSolver {
     private static int extractRemainingCount(String text) {
         if (text == null || text.isEmpty()) return -1;
         java.util.regex.Matcher matcher =
-                java.util.regex.Pattern.compile("剩余\\s*([0-9]{1,4})")
-                        .matcher(text);
+                java.util.regex.Pattern.compile(
+                        "(?:剩余|剩小|还剩)\\s*([0-9]{1,4})"
+                ).matcher(text);
         if (!matcher.find()) return -1;
         try {
             return Integer.parseInt(matcher.group(1));
@@ -682,7 +819,9 @@ public final class FruitGameSolver {
 
     private enum UiDecision {
         NONE,
+        PAGE_CHANGED,
         POPUP_CLOSED,
+        LEFT_GAME,
         COMPLETED,
         FAILED
     }

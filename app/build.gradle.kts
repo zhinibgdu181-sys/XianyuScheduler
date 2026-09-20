@@ -13,8 +13,8 @@ android {
         minSdk = 26
         targetSdk = 35
 
-        versionCode = 79
-        versionName = "4.45.0"
+        versionCode = 80
+        versionName = "4.45.1"
     }
 
     // Stable signing support.

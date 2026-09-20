@@ -69,7 +69,6 @@ final class FruitPlanner {
     static Plan plan(FruitBoardState state) {
         if (state == null || state.boardFruits.isEmpty()) return Plan.empty();
 
-        long deadline = System.nanoTime() + SEARCH_BUDGET_MS * 1_000_000L;
         List<Move> rootMoves = generateMoves(state);
         boolean rescue = false;
         if (rootMoves.isEmpty()) {
@@ -78,9 +77,19 @@ final class FruitPlanner {
         }
 
         if (!rootMoves.isEmpty()) {
+            long deadline = System.nanoTime() + SEARCH_BUDGET_MS * 1_000_000L;
             SearchResult best = new SearchResult();
             search(state, rootMoves, 0, 0.0, new ArrayList<>(),
                     new HashSet<>(), best, deadline);
+
+            // Even if bounded look-ahead expires immediately, never convert a
+            // valid root move set into "无安全动作". Fall back to the best
+            // already-ranked root pair.
+            if (best.path.isEmpty()) {
+                rootMoves.sort((a, b) -> Double.compare(b.score, a.score));
+                best.path.add(rootMoves.get(0));
+                best.score = rootMoves.get(0).score;
+            }
 
             if (!best.path.isEmpty()) {
                 // Never replay a long route from a vision model that has not yet
@@ -173,62 +182,68 @@ final class FruitPlanner {
 
     private static List<Move> generateMoves(FruitBoardState state) {
         List<Move> result = new ArrayList<>();
-        for (int i = 0; i < state.boardFruits.size(); i++) {
+        final int n = state.boardFruits.size();
+        if (n < 2) return result;
+
+        /*
+         * Precompute pair distances and nearest/second-nearest neighbours once.
+         * The previous implementation recalculated a fruit's neighbours inside
+         * every candidate pair, making move generation roughly O(n^3). On a
+         * 67-object frame this consumed ~13 seconds and the search deadline had
+         * already expired before DFS started.
+         */
+        double[][] distance = new double[n][n];
+        double[] best = new double[n];
+        double[] second = new double[n];
+        int[] bestIndex = new int[n];
+        java.util.Arrays.fill(best, Double.MAX_VALUE);
+        java.util.Arrays.fill(second, Double.MAX_VALUE);
+        java.util.Arrays.fill(bestIndex, -1);
+
+        for (int i = 0; i < n; i++) {
+            FruitBoardState.Fruit a = state.boardFruits.get(i);
+            for (int j = i + 1; j < n; j++) {
+                double d = a.similarityDistance(state.boardFruits.get(j));
+                distance[i][j] = d;
+                distance[j][i] = d;
+
+                if (d < best[i]) {
+                    second[i] = best[i];
+                    best[i] = d;
+                    bestIndex[i] = j;
+                } else if (d < second[i]) {
+                    second[i] = d;
+                }
+
+                if (d < best[j]) {
+                    second[j] = best[j];
+                    best[j] = d;
+                    bestIndex[j] = i;
+                } else if (d < second[j]) {
+                    second[j] = d;
+                }
+            }
+        }
+
+        for (int i = 0; i < n; i++) {
             FruitBoardState.Fruit a = state.boardFruits.get(i);
             double accessA = clickability(state, a);
 
-            for (int j = i + 1; j < state.boardFruits.size(); j++) {
+            for (int j = i + 1; j < n; j++) {
                 FruitBoardState.Fruit b = state.boardFruits.get(j);
-                double similarity = a.similarityDistance(b);
+                double similarity = distance[i][j];
                 if (similarity > PAIR_MAX_DISTANCE) continue;
 
-                // Do not require reciprocal nearest-neighbour identity.
-                // The live board contains repeated fruit types; when three or
-                // more visually similar fruits exist, a legitimate pair can
-                // naturally fail a strict "each other's nearest" test.
-                double aBest = Double.MAX_VALUE;
-                double aSecond = Double.MAX_VALUE;
-                int aBestIndex = -1;
-                double bBest = Double.MAX_VALUE;
-                double bSecond = Double.MAX_VALUE;
-                int bBestIndex = -1;
-
-                for (int k = 0; k < state.boardFruits.size(); k++) {
-                    if (k == i) continue;
-                    double d = a.similarityDistance(state.boardFruits.get(k));
-                    if (d < aBest) {
-                        aSecond = aBest;
-                        aBest = d;
-                        aBestIndex = k;
-                    } else if (d < aSecond) {
-                        aSecond = d;
-                    }
-                }
-                for (int k = 0; k < state.boardFruits.size(); k++) {
-                    if (k == j) continue;
-                    double d = b.similarityDistance(state.boardFruits.get(k));
-                    if (d < bBest) {
-                        bSecond = bBest;
-                        bBest = d;
-                        bBestIndex = k;
-                    } else if (d < bSecond) {
-                        bSecond = d;
-                    }
-                }
-
-                boolean reciprocal = aBestIndex == j && bBestIndex == i;
-                boolean oneWayNearest = aBestIndex == j || bBestIndex == i;
+                boolean reciprocal = bestIndex[i] == j && bestIndex[j] == i;
+                boolean oneWayNearest = bestIndex[i] == j || bestIndex[j] == i;
                 boolean closeEnough = similarity <= PAIR_HIGH_CONFIDENCE_DISTANCE;
                 if (!reciprocal && !oneWayNearest && !closeEnough) continue;
 
-                double aMargin = aSecond == Double.MAX_VALUE
-                        ? 0.0 : aSecond - aBest;
-                double bMargin = bSecond == Double.MAX_VALUE
-                        ? 0.0 : bSecond - bBest;
+                double aMargin = second[i] == Double.MAX_VALUE
+                        ? 0.0 : second[i] - best[i];
+                double bMargin = second[j] == Double.MAX_VALUE
+                        ? 0.0 : second[j] - best[j];
 
-                // Only reject a highly ambiguous relaxed candidate when neither
-                // fruit considers the other its nearest match. This prevents the
-                // old 0-action deadlock while retaining a conservative first tier.
                 if (!reciprocal
                         && !oneWayNearest
                         && aMargin < PAIR_AMBIGUITY_MARGIN
@@ -242,8 +257,7 @@ final class FruitPlanner {
                         + 0.24 * (accessA + clickability(state, b))
                         + (trayMatch ? 0.10 : 0.0)
                         + (reciprocal ? 0.10 : 0.0)
-                        + 0.20 * Math.min(1.0,
-                        (aMargin + bMargin) / 0.12);
+                        + 0.20 * Math.min(1.0, (aMargin + bMargin) / 0.12);
 
                 result.add(new Move(
                         i, j,
@@ -252,6 +266,14 @@ final class FruitPlanner {
                         score
                 ));
             }
+        }
+
+        // Search only the strongest alternatives. Keeping thousands of visually
+        // near-identical pairs adds branching cost without improving the first
+        // verified move.
+        result.sort((a, b) -> Double.compare(b.score, a.score));
+        if (result.size() > 48) {
+            return new ArrayList<>(result.subList(0, 48));
         }
         return result;
     }

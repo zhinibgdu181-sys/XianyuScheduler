@@ -70,4 +70,28 @@ public class FruitPlannerTest {
         assertFalse(plan.isEmpty());
         assertTrue(plan.reason.contains("执行一组后立即验证"));
     }
+
+    @Test
+    public void manySimilarFruitsStillProduceImmediatePair() {
+        java.util.List<FruitBoardState.Fruit> fruits = new java.util.ArrayList<>();
+        for (int i = 0; i < 70; i++) {
+            int x = 80 + (i % 10) * 90;
+            int y = 180 + (i / 10) * 120;
+            float delta = (i % 3) - 1;
+            fruits.add(fruit(x, y, 240 + delta, 70 - delta, 70, delta));
+        }
+
+        FruitBoardState state = new FruitBoardState(1080, 2400, fruits, null);
+        FruitPlanner.Plan plan = FruitPlanner.plan(state);
+        assertFalse(plan.isEmpty());
+        assertTrue(plan.clicks.get(0).reason.startsWith("PAIR"));
+    }
+
+    @Test
+    public void versionedStartScreenIsRecognizedWithoutFruitWord() {
+        assertTrue(FruitGameSolver.looksLikeFruitStartScreen(
+                "VERSION1.0.2 d6f51 开始游戏 第1关 排行榜"
+        ));
+    }
+
 }
