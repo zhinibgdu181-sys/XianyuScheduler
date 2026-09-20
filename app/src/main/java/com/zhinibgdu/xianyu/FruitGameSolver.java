@@ -152,6 +152,35 @@ public final class FruitGameSolver {
                     continue;
                 }
 
+                /*
+                 * Vision sanity gate:
+                 * The real board observed in the earlier validated run contained
+                 * 54 fruit objects. The new detector returning R=1/T=2 while OCR
+                 * still says "剩余 202" is an invalid frame, not a legal game
+                 * state. Never turn a bad vision result into an arbitrary unlock
+                 * click.
+                 */
+                if (observed.boardFruits.size() < 6) {
+                    ScreenOcr.Snapshot consistency = host.ocr("水果视觉一致性检查");
+                    int remaining = extractRemainingCount(
+                            consistency == null ? "" : consistency.fullText
+                    );
+                    if (remaining >= 20) {
+                        host.log("[水果视觉保护] 识别结果不可信："
+                                + "检测水果=" + observed.boardFruits.size()
+                                + " / 槽位=" + observed.trayCount()
+                                + " / OCR剩余=" + remaining
+                                + "；禁止UNLOCK，重新截图识别");
+                        noProgress++;
+                        if (noProgress >= MAX_NO_PROGRESS) {
+                            host.log("[水果视觉保护] 连续异常棋盘，停止本轮而不是误点");
+                            return Result.SAFE_STOP_DIRTY;
+                        }
+                        host.sleep(120L, 180L);
+                        continue;
+                    }
+                }
+
                 current = observed;
             } finally {
                 if (!frame.isRecycled()) frame.recycle();
@@ -486,6 +515,19 @@ public final class FruitGameSolver {
             if (target.similarityDistance(other) < 0.29) count++;
         }
         return count;
+    }
+
+    private static int extractRemainingCount(String text) {
+        if (text == null || text.isEmpty()) return -1;
+        java.util.regex.Matcher matcher =
+                java.util.regex.Pattern.compile("剩余\\s*([0-9]{1,4})")
+                        .matcher(text);
+        if (!matcher.find()) return -1;
+        try {
+            return Integer.parseInt(matcher.group(1));
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 
     private static boolean containsAny(String text, String... values) {
