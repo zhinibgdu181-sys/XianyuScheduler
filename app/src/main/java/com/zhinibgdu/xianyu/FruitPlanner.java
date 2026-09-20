@@ -75,6 +75,49 @@ final class FruitPlanner {
                 + " avgNearest=" + avgText;
     }
 
+    static int distinctTrayTypes(FruitBoardState state) {
+        if (state == null || state.trayFruits.isEmpty()) return 0;
+        List<FruitBoardState.Fruit> representatives = new ArrayList<>();
+        for (FruitBoardState.Fruit fruit : state.trayFruits) {
+            boolean matched = false;
+            for (FruitBoardState.Fruit representative : representatives) {
+                if (fruit.similarityDistance(representative) <= TRAY_MATCH_MAX_DISTANCE) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) representatives.add(fruit);
+        }
+        return representatives.size();
+    }
+
+    static boolean hasTrayMatch(FruitBoardState state) {
+        return bestTrayMatchAggressive(state) != null;
+    }
+
+    static Plan planAggressiveTrayMatch(
+            FruitBoardState state,
+            Set<String> blockedRootActions
+    ) {
+        if (state == null || state.trayFruits.isEmpty()) return Plan.empty();
+
+        Click click = bestTrayMatchAggressive(state);
+        if (click == null) return Plan.empty();
+
+        List<Click> clicks = new ArrayList<>(1);
+        clicks.add(click);
+        Plan plan = new Plan(
+                clicks,
+                100.0,
+                "死局破局：强制优先补齐槽内同类"
+        );
+
+        Set<String> blocked = blockedRootActions == null
+                ? java.util.Collections.emptySet()
+                : blockedRootActions;
+        return blocked.contains(plan.actionKey()) ? Plan.empty() : plan;
+    }
+
     static Plan plan(FruitBoardState state) {
         return plan(state, java.util.Collections.emptySet());
     }
@@ -567,6 +610,41 @@ final class FruitPlanner {
         return bestFruit == null
                 ? null
                 : new Click(bestFruit.centerX, bestFruit.centerY, "TRAY_MATCH");
+    }
+
+    private static Click bestTrayMatchAggressive(FruitBoardState state) {
+        if (state == null || state.trayFruits.isEmpty()) return null;
+
+        FruitBoardState.Fruit bestFruit = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+
+        for (FruitBoardState.Fruit board : state.boardFruits) {
+            double identity = Double.MAX_VALUE;
+            for (FruitBoardState.Fruit tray : state.trayFruits) {
+                identity = Math.min(identity, board.similarityDistance(tray));
+            }
+            if (identity > TRAY_MATCH_MAX_DISTANCE) continue;
+
+            double drop = clickability(state, board);
+            int below = downwardBlockers(state, board);
+            double score = 8.0 * Math.max(
+                    0.0,
+                    1.0 - identity / TRAY_MATCH_MAX_DISTANCE
+            ) + 0.35 * drop - 0.03 * Math.min(8, below);
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestFruit = board;
+            }
+        }
+
+        return bestFruit == null
+                ? null
+                : new Click(
+                        bestFruit.centerX,
+                        bestFruit.centerY,
+                        "DEADLOCK_TRAY_MATCH"
+                );
     }
 
     private static boolean contains(
