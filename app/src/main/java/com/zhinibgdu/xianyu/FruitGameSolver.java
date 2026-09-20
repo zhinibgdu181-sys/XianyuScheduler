@@ -635,7 +635,11 @@ public final class FruitGameSolver {
         if (text == null) return false;
         String normalized = text.replace(" ", "");
         boolean unlock = containsAny(normalized,
-                "解锁所有槽位", "解锁所有檀位", "解锁所有槽");
+                "解锁所有槽位", "解锁所有檀位", "解锁所有糟位",
+                "解锁所有槽", "解锁所有檀", "解锁所有糟")
+                || (normalized.contains("解锁")
+                && normalized.contains("所有")
+                && containsAny(normalized, "位", "槽", "檀", "糟"));
         boolean eliminate = containsAny(normalized,
                 "开局消除多组水果", "开局消除多組水果");
         return (unlock || eliminate)
@@ -766,10 +770,12 @@ public final class FruitGameSolver {
 
         if (looksLikeRewardToolPopup(text)) {
             ScreenOcr.Item close = findToolModalCloseCandidate(snapshot);
+            // Measured from 13737.mp4: close button center is about
+            // (879,500) on 1080x2340 => normalized (0.814, 0.214).
             int closeX = close != null
-                    ? close.centerX() : Math.round(snapshot.width * 0.667f);
+                    ? close.centerX() : Math.round(snapshot.width * 0.814f);
             int closeY = close != null
-                    ? close.centerY() : Math.round(snapshot.height * 0.219f);
+                    ? close.centerY() : Math.round(snapshot.height * 0.214f);
 
             if (GameTapPolicy.allows(
                     closeX, closeY, snapshot.width, snapshot.height,
@@ -853,11 +859,11 @@ public final class FruitGameSolver {
 
             double nx = item.centerX() / (double) Math.max(1, snapshot.width);
             double ny = item.centerY() / (double) Math.max(1, snapshot.height);
-            if (nx < .58 || nx > .76 || ny < .16 || ny > .30) continue;
+            if (nx < .76 || nx > .87 || ny < .17 || ny > .26) continue;
 
             int score = 100
-                    - (int) (Math.abs(nx - .667) * 300)
-                    - (int) (Math.abs(ny - .219) * 300);
+                    - (int) (Math.abs(nx - .814) * 300)
+                    - (int) (Math.abs(ny - .214) * 300);
             if (score > bestScore) {
                 bestScore = score;
                 best = item;
