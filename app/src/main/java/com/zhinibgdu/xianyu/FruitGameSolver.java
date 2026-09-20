@@ -199,6 +199,12 @@ public final class FruitGameSolver {
                     routeIndex++) {
 
                 FruitPlanner.Click click = plan.clicks.get(routeIndex);
+                if (!FruitPlanner.matchesClickTarget(current, click)) {
+                    host.log("[水果执行] 路线坐标已失效，"
+                            + "当前画面与预测状态不一致；废弃剩余路线");
+                    routeBroken = true;
+                    break;
+                }
                 if (!GameTapPolicy.allows(
                         click.x,
                         click.y,
