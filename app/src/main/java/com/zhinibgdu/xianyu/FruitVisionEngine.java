@@ -25,13 +25,16 @@ final class FruitVisionEngine {
     // top fruits and treated lower UI/decorations as tray contents.
     private static final float BOARD_TOP = 0.00f;
     private static final float BOARD_BOTTOM = 0.60f;
-    // Central collector only. In the real recording, a pending fruit sits in
-    // the narrow gap between the roofs around y=0.72..0.82. Restricting both
-    // axes avoids the old false tray=4 caused by roofs/buttons/decorations.
-    private static final float TRAY_TOP = 0.70f;
-    private static final float TRAY_BOTTOM = 0.82f;
-    private static final float TRAY_LEFT = 0.40f;
-    private static final float TRAY_RIGHT = 0.60f;
+    // Real collector/chute calibration from the successful 13733.mp4 run:
+    // a pending banana is centered around x≈0.50W, y≈0.83H. The previous
+    // 0.70..0.82 ROI actually covered the two roof/wall edges and created
+    // two fake UNKNOWN tray fruits even when the chute was empty.
+    //
+    // 13749.mp4 empty chute is clean cyan in this narrower box.
+    private static final float TRAY_TOP = 0.78f;
+    private static final float TRAY_BOTTOM = 0.86f;
+    private static final float TRAY_LEFT = 0.44f;
+    private static final float TRAY_RIGHT = 0.56f;
 
     private FruitVisionEngine() {}
 
