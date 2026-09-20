@@ -32,6 +32,7 @@ final class GameTapPolicy {
         // an unrestricted screen tap path.
         if ("PAIR_FIRST".equals(reason)
                 || "PAIR_SECOND".equals(reason)
+                || "TRAY_MATCH".equals(reason)
                 || "UNLOCK".equals(reason)
                 || "水果游戏-V4.87-BOARD_PUSH".equals(reason)
                 || "水果游戏-V4.87-TRAY_MATCH".equals(reason)) {
