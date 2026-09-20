@@ -358,66 +358,147 @@ public final class FruitGameSolver {
         return Result.SAFE_STOP_DIRTY;
     }
 
-    private static boolean tryDeadlockShuffle(
+    private static boolean tryDeadlockRestart(
             Host host,
-            FruitBoardState state,
+            FruitTemplateMatcher.State state,
             String reason
     ) {
-        if (host == null || state == null) return false;
+        if (host == null) return false;
 
-        ScreenOcr.Snapshot snapshot = host.ocr("水果死局破局-打乱");
+        ScreenOcr.Snapshot snapshot = host.ocr("水果死局-重开探测");
         if (snapshot == null || snapshot.isEmpty()) return false;
 
         if (looksLikeTaskPanelText(snapshot.fullText)
-                || looksLikeFailedRound(snapshot.fullText)
-                || looksLikeCompletedRoundText(snapshot.fullText)
-                || looksLikeBlockingFunctionPopupText(snapshot.fullText)) {
+                || looksLikeCompletedRoundText(snapshot.fullText)) {
             return false;
         }
 
-        ScreenOcr.Item shuffle = findTextCandidate(snapshot, "打乱");
-        int x;
-        int y;
-        if (shuffle != null) {
-            x = shuffle.centerX();
-            y = shuffle.centerY();
-        } else if (containsAny(snapshot.fullText, "剩余", "剩小", "还剩")
-                && snapshot.fullText.contains("第1关")) {
-            // Stable fallback measured from the game layout. Only used after
-            // OCR confirms we are still on the live board.
-            x = Math.round(snapshot.width * 0.78f);
-            y = Math.round(snapshot.height * 0.935f);
-        } else {
+        // If a restart button is already visible, use it directly.
+        ScreenOcr.Item direct = findTextCandidate(
+                snapshot,
+                "重新开始", "重新挑战", "重开", "再来一局"
+        );
+        if (direct != null
+                && GameTapPolicy.allows(
+                direct.centerX(), direct.centerY(),
+                snapshot.width, snapshot.height,
+                "水果游戏-死局重新开始")
+                && host.tap(
+                direct.centerX(), direct.centerY(),
+                "水果游戏-死局重新开始")) {
+            host.log("[水果重开] " + reason + " → 点击当前页面重开按钮");
+            host.sleep(350L, 520L);
+            confirmRestartIfNeeded(host);
+            return true;
+        }
+
+        // Live board deadlock: open the gear/settings menu first.
+        boolean boardEvidence = looksLikeFruitGame(snapshot.fullText)
+                || snapshot.fullText.contains("第1关")
+                || containsAny(snapshot.fullText, "剩余", "剩小", "还剩");
+        if (!boardEvidence) return false;
+
+        int gearX = Math.round(snapshot.width * 0.075f);
+        int gearY = Math.round(snapshot.height * 0.070f);
+        if (!GameTapPolicy.allows(
+                gearX, gearY, snapshot.width, snapshot.height,
+                "水果游戏-死局设置")) {
+            return false;
+        }
+
+        if (!host.tap(gearX, gearY, "水果游戏-死局设置")) {
+            return false;
+        }
+        host.log("[水果重开] " + reason + " → 打开设置");
+        if (!host.sleep(220L, 360L)) return false;
+
+        ScreenOcr.Snapshot menu = host.ocr("水果死局-设置菜单");
+        if (menu == null || menu.isEmpty()) return false;
+
+        ScreenOcr.Item restart = findTextCandidate(
+                menu,
+                "重新开始", "重新挑战", "重开", "再来一局"
+        );
+        if (restart == null) {
+            host.log("[水果重开] 设置菜单中未识别到重开按钮，停止而不是乱点");
             return false;
         }
 
         if (!GameTapPolicy.allows(
-                x, y, snapshot.width, snapshot.height,
-                "FRUIT_DEADLOCK_SHUFFLE")) {
-            host.log("[水果死局] 找到打乱但坐标未通过安全白名单："
-                    + x + "," + y);
+                restart.centerX(), restart.centerY(),
+                menu.width, menu.height,
+                "水果游戏-死局重新开始")) {
+            host.log("[水果重开] 重开按钮坐标未通过安全白名单");
             return false;
         }
 
-        boolean ok = host.tap(x, y, "FRUIT_DEADLOCK_SHUFFLE");
-        if (ok) {
-            host.log("[水果死局] " + reason
-                    + " → 主动点击‘打乱’破局 @"
-                    + x + "," + y);
+        if (!host.tap(
+                restart.centerX(), restart.centerY(),
+                "水果游戏-死局重新开始")) {
+            return false;
         }
-        return ok;
+
+        host.log("[水果重开] 已点击‘重新开始’");
+        host.sleep(220L, 360L);
+        confirmRestartIfNeeded(host);
+        return true;
     }
 
-    private static String traySignature(FruitBoardState state) {
-        if (state == null || state.trayFruits.isEmpty()) return "EMPTY";
+    private static void confirmRestartIfNeeded(Host host) {
+        ScreenOcr.Snapshot confirm = host.ocr("水果死局-确认重开");
+        if (confirm == null || confirm.isEmpty()) return;
+
+        ScreenOcr.Item item = findTextCandidate(
+                confirm,
+                "确认重开", "确定", "确认", "重新开始"
+        );
+        if (item == null) return;
+
+        if (GameTapPolicy.allows(
+                item.centerX(), item.centerY(),
+                confirm.width, confirm.height,
+                "水果游戏-死局确认重开")) {
+            host.tap(
+                    item.centerX(), item.centerY(),
+                    "水果游戏-死局确认重开");
+            host.log("[水果重开] 已确认重开");
+        }
+    }
+
+    private static String textOf(ScreenOcr.Snapshot snapshot) {
+        return snapshot == null ? "" : snapshot.fullText;
+    }
+
+    private static String trayTypeSummary(FruitTemplateMatcher.State state) {
+        if (state == null || state.tray.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < state.tray.size(); i++) {
+            if (i > 0) sb.append(',');
+            FruitTemplateMatcher.DetectedFruit fruit = state.tray.get(i);
+            sb.append(fruit.type);
+        }
+        return sb.append(']').toString();
+    }
+
+    private static String templateStateSignature(
+            FruitTemplateMatcher.State state
+    ) {
+        if (state == null) return "NULL";
+
         StringBuilder sb = new StringBuilder();
-        for (FruitBoardState.Fruit fruit : state.trayFruits) {
-            sb.append(Math.round(fruit.meanR / 16.0f)).append(',')
-                    .append(Math.round(fruit.meanG / 16.0f)).append(',')
-                    .append(Math.round(fruit.meanB / 16.0f)).append(';');
+        sb.append("T=").append(trayTypeSummary(state)).append('|');
+
+        for (FruitTemplateMatcher.DetectedFruit fruit : state.board) {
+            if (!fruit.known() || !fruit.uncovered || fruit.fruit == null) continue;
+            sb.append(fruit.type).append('@')
+                    .append(Math.round(fruit.fruit.centerX / 24.0f))
+                    .append(',')
+                    .append(Math.round(fruit.fruit.centerY / 24.0f))
+                    .append(';');
         }
         return sb.toString();
     }
+
 
     public static boolean looksLikeFruitGame(String text) {
         if (text == null) return false;
