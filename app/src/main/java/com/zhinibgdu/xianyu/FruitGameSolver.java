@@ -100,8 +100,9 @@ public final class FruitGameSolver {
         long lastActionAt = System.currentTimeMillis();
         int noProgress = 0;
         int replanCount = 0;
-        long deadlockSince = 0L;
+        long trayRiskSince = 0L;
         String deadlockTraySignature = "";
+        long stalledSince = 0L;
         FruitBoardState current = null;
         Set<String> failedActionKeys = new HashSet<>();
 
@@ -132,8 +133,9 @@ public final class FruitGameSolver {
                     replanCount++;
                     noProgress = 0;
                     failedActionKeys.clear();
-                    deadlockSince = 0L;
+                    trayRiskSince = 0L;
                     deadlockTraySignature = "";
+                    stalledSince = 0L;
                     host.sleep(220L, 360L);
                     continue;
                 }
@@ -230,21 +232,21 @@ public final class FruitGameSolver {
 
             boolean trayRisk = trayDistinct >= 2 && !hasAggressiveTrayMatch;
             if (trayRisk) {
-                if (deadlockSince == 0L
+                if (trayRiskSince == 0L
                         || !traySignature.equals(deadlockTraySignature)) {
-                    deadlockSince = decisionNow;
+                    trayRiskSince = decisionNow;
                     deadlockTraySignature = traySignature;
                     host.log("[水果死局计时] 槽内不同水果=" + trayDistinct
                             + "，当前无可补齐同类；开始2秒忍耐计时");
                 }
             } else {
-                deadlockSince = 0L;
+                trayRiskSince = 0L;
                 deadlockTraySignature = "";
             }
 
             boolean criticalTray = trayDistinct >= 3 && !hasAggressiveTrayMatch;
             boolean trayTimedOut = trayRisk
-                    && decisionNow - deadlockSince >= DEADLOCK_WAIT_MS;
+                    && decisionNow - trayRiskSince >= DEADLOCK_WAIT_MS;
 
             FruitPlanner.Plan plan;
             if (hasAggressiveTrayMatch && trayDistinct >= 2) {
@@ -266,10 +268,16 @@ public final class FruitGameSolver {
                     plan.reason
             ));
 
-            if (criticalTray || trayTimedOut) {
+            boolean generalStallTimedOut =
+                    stalledSince > 0L
+                            && decisionNow - stalledSince >= DEADLOCK_WAIT_MS;
+
+            if (criticalTray || trayTimedOut || generalStallTimedOut) {
                 String why = criticalTray
                         ? "槽内已有3种不同水果"
-                        : "槽内2种不同水果等待同类超过2秒";
+                        : (trayTimedOut
+                        ? "槽内2种不同水果等待同类超过2秒"
+                        : "连续候选无效/无Pair超过2秒");
                 host.log("[水果死局] " + why + "，禁止继续被动扫描");
 
                 // First priority is always a strict identity match to something
@@ -282,8 +290,9 @@ public final class FruitGameSolver {
                     lastActionAt = System.currentTimeMillis();
                     failedActionKeys.clear();
                     noProgress = 0;
-                    deadlockSince = 0L;
+                    trayRiskSince = 0L;
                     deadlockTraySignature = "";
+                    stalledSince = 0L;
                     host.sleep(650L, 900L);
                     continue;
                 }
@@ -302,19 +311,19 @@ public final class FruitGameSolver {
                     }
                 }
 
-                if (deadlockSince == 0L) {
-                    deadlockSince = decisionNow;
-                    deadlockTraySignature = traySignature;
+                if (stalledSince == 0L) {
+                    stalledSince = decisionNow;
                     host.log("[水果死局计时] 当前没有可靠Pair，开始2秒破局计时");
                 }
 
-                if (decisionNow - deadlockSince >= DEADLOCK_WAIT_MS) {
+                if (decisionNow - stalledSince >= DEADLOCK_WAIT_MS) {
                     if (tryDeadlockShuffle(host, current, "连续2秒没有可靠Pair")) {
                         lastActionAt = System.currentTimeMillis();
                         failedActionKeys.clear();
                         noProgress = 0;
-                        deadlockSince = 0L;
+                        trayRiskSince = 0L;
                         deadlockTraySignature = "";
+                        stalledSince = 0L;
                         host.sleep(650L, 900L);
                         continue;
                     }
@@ -459,9 +468,10 @@ public final class FruitGameSolver {
                     failedActionKeys.clear();
                     if ("TRAY_MATCH".equals(click.reason)
                             || "DEADLOCK_TRAY_MATCH".equals(click.reason)) {
-                        deadlockSince = 0L;
+                        trayRiskSince = 0L;
                         deadlockTraySignature = "";
                     }
+                    stalledSince = 0L;
                     noProgress = 0;
                     routeBroken = true;
                     current = null;
@@ -521,9 +531,10 @@ public final class FruitGameSolver {
                     current = after;
                     failedActionKeys.clear();
                     if (trayMatchStructural) {
-                        deadlockSince = 0L;
+                        trayRiskSince = 0L;
                         deadlockTraySignature = "";
                     }
+                    stalledSince = 0L;
                     noProgress = 0;
                     continue;
                 }
@@ -542,8 +553,9 @@ public final class FruitGameSolver {
                             + " 槽位=" + current.trayCount() + "->" + after.trayCount());
                     current = after;
                     failedActionKeys.clear();
-                    deadlockSince = 0L;
+                    trayRiskSince = 0L;
                     deadlockTraySignature = "";
+                    stalledSince = 0L;
                     routeBroken = true;
                     noProgress = 0;
                     break;
@@ -563,12 +575,11 @@ public final class FruitGameSolver {
                 routeBroken = true;
                 noProgress++;
 
-                if (deadlockSince == 0L) {
-                    deadlockSince = System.currentTimeMillis();
-                    deadlockTraySignature = traySignature(current);
+                if (stalledSince == 0L) {
+                    stalledSince = System.currentTimeMillis();
                 }
                 host.log("[水果死局] 当前候选无效，加入黑名单并立即换候选；"
-                        + "达到2秒极限后改用打乱破局");
+                        + "连续无进展达到2秒后改用打乱破局");
                 break;
             }
 
