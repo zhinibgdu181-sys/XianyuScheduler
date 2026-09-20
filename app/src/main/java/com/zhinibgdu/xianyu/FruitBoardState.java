@@ -5,12 +5,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/**
- * Immutable snapshot of the visible fruit board.
- *
- * The solver never carries stale coordinates across screenshots. A new state is
- * built from every accepted frame and actions are planned against that state only.
- */
+/** Immutable snapshot of the visible fruit board. */
 final class FruitBoardState {
     final int width;
     final int height;
@@ -28,13 +23,9 @@ final class FruitBoardState {
         this.trayFruits = Collections.unmodifiableList(tray);
     }
 
-    int trayCount() {
-        return Math.min(3, trayFruits.size());
-    }
+    int trayCount() { return Math.min(3, trayFruits.size()); }
 
-    boolean isEmpty() {
-        return boardFruits.isEmpty() && trayFruits.isEmpty();
-    }
+    boolean isEmpty() { return boardFruits.isEmpty() && trayFruits.isEmpty(); }
 
     int fingerprintChangesAgainst(FruitBoardState other) {
         if (other == null) return boardFruits.size();
@@ -60,37 +51,13 @@ final class FruitBoardState {
     }
 
     static final class Fruit {
-        final int centerX;
-        final int centerY;
-        final int left;
-        final int top;
-        final int right;
-        final int bottom;
-        final int pixelArea;
-        final float meanR;
-        final float meanG;
-        final float meanB;
-        final float meanHue;
-        final float saturation;
-        final float value;
+        final int centerX, centerY, left, top, right, bottom, pixelArea;
+        final float meanR, meanG, meanB, meanHue, saturation, value;
         final float[] hueHistogram;
 
-        Fruit(
-                int centerX,
-                int centerY,
-                int left,
-                int top,
-                int right,
-                int bottom,
-                int pixelArea,
-                float meanR,
-                float meanG,
-                float meanB,
-                float meanHue,
-                float saturation,
-                float value,
-                float[] hueHistogram
-        ) {
+        Fruit(int centerX, int centerY, int left, int top, int right, int bottom,
+              int pixelArea, float meanR, float meanG, float meanB,
+              float meanHue, float saturation, float value, float[] hueHistogram) {
             this.centerX = centerX;
             this.centerY = centerY;
             this.left = left;
@@ -107,26 +74,18 @@ final class FruitBoardState {
             this.hueHistogram = hueHistogram == null ? new float[12] : hueHistogram.clone();
         }
 
-        int width() {
-            return Math.max(1, right - left);
-        }
-
-        int height() {
-            return Math.max(1, bottom - top);
-        }
-
-        float aspectRatio() {
-            return width() / (float) height();
-        }
+        int width() { return Math.max(1, right - left); }
+        int height() { return Math.max(1, bottom - top); }
+        float aspectRatio() { return width() / (float) height(); }
 
         double colorDistance(Fruit other) {
             if (other == null) return Double.MAX_VALUE;
+
             double rgb = (
                     Math.abs(meanR - other.meanR)
                             + Math.abs(meanG - other.meanG)
                             + Math.abs(meanB - other.meanB)
             ) / (255.0 * 3.0);
-
             double hue = circularHueDistance(meanHue, other.meanHue) / 180.0;
             double sv = (Math.abs(saturation - other.saturation)
                     + Math.abs(value - other.value)) / 2.0;
@@ -137,25 +96,26 @@ final class FruitBoardState {
             }
             hist *= 0.5;
 
-            double shape = Math.min(
+            double areaRatio = Math.min(
                     1.0,
-                    Math.abs(aspectRatio() - other.aspectRatio()) * 0.35
-                            + Math.abs(
-                            Math.sqrt(Math.max(1.0, pixelArea))
-                                    - Math.sqrt(Math.max(1.0, other.pixelArea))
-                    ) / 120.0
+                    Math.abs(pixelArea - (double) other.pixelArea)
+                            / Math.max(1.0, Math.max(pixelArea, other.pixelArea))
             );
+            double aspect = Math.min(1.0,
+                    Math.abs(aspectRatio() - other.aspectRatio()) * 0.50);
 
-            return 0.34 * rgb
-                    + 0.24 * hue
-                    + 0.18 * sv
-                    + 0.20 * hist
-                    + 0.04 * shape;
+            // Local seed patches can contain neighbouring fruits. Identity must
+            // therefore depend more on hue distribution, size and shape than the
+            // previous broad mean-colour metric.
+            return 0.25 * rgb
+                    + 0.22 * hue
+                    + 0.15 * sv
+                    + 0.28 * hist
+                    + 0.06 * areaRatio
+                    + 0.04 * aspect;
         }
 
-        double similarityDistance(Fruit other) {
-            return colorDistance(other);
-        }
+        double similarityDistance(Fruit other) { return colorDistance(other); }
 
         static double circularHueDistance(double a, double b) {
             double d = Math.abs(a - b);
