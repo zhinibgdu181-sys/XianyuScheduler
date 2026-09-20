@@ -2259,6 +2259,9 @@ public final class TaskExecutor {
             flow.move(TaskRunStateV411.DISCOVERED, "before=" + before.describe());
 
             long taskStart = SystemClock.elapsedRealtime();
+            int pendingClaimCoinsV449 = target.isClaimReward
+                    ? extractRewardCoinsNearClaimV449(taskOcr, target)
+                    : 0;
             flow.move(TaskRunStateV411.CLICKING, target.bounds());
 
             if (!clickBounds(suPath, xml, target.bounds())) {
@@ -2331,12 +2334,27 @@ public final class TaskExecutor {
                 TaskProfileStoreV48.recordSuccess(target.name, elapsed);
                 TeachingOutcomeStore.setTaskResult(
                         lastContext, TeachingOutcomeStore.SUCCESS, verification.reason);
+
+                if (target.isClaimReward && pendingClaimCoinsV449 > 0) {
+                    TaskStatusReceiver.recordConfirmedCoinReward(
+                            lastContext, target.name, pendingClaimCoinsV449);
+                    diagnostic("[领取奖励V4.49] 已确认记录 "
+                            + target.name + " +" + pendingClaimCoinsV449 + "闲鱼币");
+                }
+
                 sendStatus(
                         target.name,
                         "SUCCESS",
                         (target.isClaimReward ? "领取奖励已验证：" : "任务完成已验证：")
                                 + verification.reason
                 );
+
+                // Every verified normal task gets an immediate reward-claim pass.
+                // If the WebView has not exposed the button yet, the ordinary
+                // scanner still keeps "领取奖励" as a fallback candidate later.
+                if (!target.isClaimReward && !userAborted) {
+                    claimRewardImmediatelyV449(suPath, target.name);
+                }
             } else if (!userAborted && executionReturned) {
                 flow.move(TaskRunStateV411.UNVERIFIED, verification.reason);
                 TaskProfileStoreV48.recordUnverifiedV411(target.name, verification.reason);
@@ -2986,6 +3004,135 @@ public final class TaskExecutor {
                     + ",action=" + action
                     + (current >= 0 && total > 0 ? ",progress=" + current + "/" + total : "");
         }
+    }
+
+    private static TaskCandidate findMatchingClaimCandidateV449(
+            ScreenOcr.Snapshot snapshot,
+            String taskName
+    ) {
+        if (snapshot == null || snapshot.isEmpty()) return null;
+        String targetKey = canonicalTaskKeyV411(taskName);
+        for (TaskCandidate candidate : findTaskCandidatesOcrV45(snapshot)) {
+            if (candidate == null || !candidate.isClaimReward) continue;
+            String candidateKey = canonicalTaskKeyV411(candidate.name);
+            if (sameTaskKeyV411(targetKey, candidateKey)) return candidate;
+        }
+        return null;
+    }
+
+    private static int extractRewardCoinsNearClaimV449(
+            ScreenOcr.Snapshot snapshot,
+            TaskCandidate claim
+    ) {
+        if (snapshot == null || snapshot.isEmpty() || claim == null) return 0;
+        int[] bounds = parseBounds(claim.bounds());
+        if (bounds == null) return 0;
+
+        int centerY = (bounds[1] + bounds[3]) / 2;
+        StringBuilder row = new StringBuilder();
+        for (ScreenOcr.Item item : snapshot.items) {
+            if (item == null || item.text == null || item.text.trim().isEmpty()) continue;
+            if (Math.abs(item.centerY() - centerY) > 175) continue;
+            if (row.length() > 0) row.append(' ');
+            row.append(item.text.trim());
+        }
+
+        int coins = CoinRewardParser.parseClaimRow(row.toString());
+        if (coins > 0) {
+            diagnostic("[领取奖励V4.49] 任务行明确识别奖励："
+                    + claim.name + " +" + coins + "闲鱼币");
+        } else {
+            diagnostic("[领取奖励V4.49] 任务行未可靠识别奖励数值，不猜测："
+                    + claim.name);
+        }
+        return coins;
+    }
+
+    /**
+     * After a normal task has been verified, look for the same row's
+     * "领取奖励" button and claim it immediately. No coordinate guessing:
+     * the click is allowed only after OCR ties a reward button to the same task.
+     */
+    private static boolean claimRewardImmediatelyV449(
+            String suPath,
+            String taskName
+    ) {
+        if (userAborted || physicalTouchDetected || taskName == null) return false;
+
+        for (int pass = 0; pass < 4; pass++) {
+            if (pass > 0 && !paceSleepV415(180L, 340L)) return false;
+            if (userAborted || physicalTouchDetected || !ensureFg(suPath)) return false;
+
+            invalidateOcrCacheV411();
+            ScreenOcr.Snapshot ocr = captureOcrV45(
+                    suPath, "任务完成后领取奖励#" + (pass + 1));
+
+            if (ocr == null || ocr.isEmpty() || !isTaskPageV45(null, ocr)) {
+                diagnostic("[领取奖励V4.49] 当前未确认任务面板，停止立即领取："
+                        + taskName);
+                return false;
+            }
+
+            TaskCandidate claim = findMatchingClaimCandidateV449(ocr, taskName);
+            if (claim == null) continue;
+
+            int coins = extractRewardCoinsNearClaimV449(ocr, claim);
+            TaskVerificationSnapshotV411 before =
+                    buildTaskVerificationSnapshotV411(ocr, taskName, true);
+
+            diagnostic("[领取奖励V4.49] 任务已完成，立即点击同一任务的‘领取奖励’："
+                    + taskName + " / bounds=" + claim.bounds());
+
+            if (!clickBounds(suPath, "", claim.bounds())) {
+                diagnostic("[领取奖励V4.49] 领取按钮点击失败：" + taskName);
+                return false;
+            }
+
+            if (!paceSleepV415(180L, 320L)) return false;
+
+            TaskVerificationResultV411 claimed =
+                    verifyTaskCompletionV411(
+                            suPath,
+                            taskName,
+                            true,
+                            before,
+                            true
+                    );
+
+            if (!claimed.verified) {
+                diagnostic("[领取奖励V4.49] 领取后未验证成功："
+                        + taskName + " / " + claimed.reason);
+                return false;
+            }
+
+            if (coins > 0) {
+                TaskStatusReceiver.recordConfirmedCoinReward(
+                        lastContext, taskName, coins);
+                sendStatus(
+                        taskName,
+                        "INFO",
+                        "任务完成后已领取奖励：+" + coins + "闲鱼币"
+                );
+            } else {
+                sendStatus(
+                        taskName,
+                        "INFO",
+                        "任务完成后已领取奖励；奖励数值未可靠识别，不计入闲鱼币合计"
+                );
+            }
+
+            diagnostic("[领取奖励V4.49] ✅ 已领取："
+                    + taskName
+                    + (coins > 0 ? " / +" + coins + "闲鱼币" : " / 币数未确认"));
+
+            closePopupIfAny(suPath);
+            invalidateOcrCacheV411();
+            return true;
+        }
+
+        diagnostic("[领取奖励V4.49] 完成后暂未出现同任务‘领取奖励’，"
+                + "后续任务面板扫描仍会继续检查：" + taskName);
+        return false;
     }
 
     private static final class TaskVerificationResultV411 {

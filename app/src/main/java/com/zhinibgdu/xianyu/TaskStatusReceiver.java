@@ -25,6 +25,7 @@ public final class TaskStatusReceiver {
     private static final String KEY_ENTRIES = "entries";
     private static final String KEY_HISTORY_PREFIX = "day_";
     private static final String KEY_COINS_PREFIX = "coins_";
+    private static final String KEY_TASK_COINS_PREFIX = "task_coins_";
 
     private TaskStatusReceiver() {
     }
@@ -139,6 +140,99 @@ public final class TaskStatusReceiver {
             return context.getApplicationContext().getSharedPreferences(TODAY_PREFS, Context.MODE_PRIVATE)
                     .getInt(KEY_COINS_PREFIX + date, 0);
         } catch (Throwable ignored) { return 0; }
+    }
+
+
+    /**
+     * Record only a reward amount that was explicitly recognized next to a
+     * verified "领取奖励" action. The daily total is rebuilt from per-task
+     * confirmed values, so a repeated OCR/claim verification cannot double count.
+     */
+    public static synchronized void recordConfirmedCoinReward(
+            Context context,
+            String task,
+            int coins
+    ) {
+        if (context == null || coins <= 0) return;
+        try {
+            Context app = context.getApplicationContext();
+            SharedPreferences p = app.getSharedPreferences(TODAY_PREFS, Context.MODE_PRIVATE);
+            String today = dayKey();
+            LinkedHashMap<String, Integer> rewards =
+                    parseTaskCoins(p.getString(KEY_TASK_COINS_PREFIX + today, ""));
+
+            String cleanTask = cleanTaskKey(task);
+            if (cleanTask.isEmpty()) return;
+
+            Integer previous = rewards.get(cleanTask);
+            if (previous != null && previous == coins) return;
+
+            rewards.put(cleanTask, coins);
+
+            int total = 0;
+            StringBuilder raw = new StringBuilder();
+            for (Map.Entry<String, Integer> entry : rewards.entrySet()) {
+                int value = Math.max(0, entry.getValue() == null ? 0 : entry.getValue());
+                total += value;
+                if (raw.length() > 0) raw.append('\n');
+                raw.append(entry.getKey().replace('\t', ' '))
+                        .append('\t')
+                        .append(value);
+            }
+
+            p.edit()
+                    .putString(KEY_TASK_COINS_PREFIX + today, raw.toString())
+                    .putInt(KEY_COINS_PREFIX + today, total)
+                    .apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static synchronized int getConfirmedCoinRewardForTask(
+            Context context,
+            String date,
+            String taskOrHistoryEntry
+    ) {
+        if (context == null || date == null) return 0;
+        try {
+            SharedPreferences p = context.getApplicationContext()
+                    .getSharedPreferences(TODAY_PREFS, Context.MODE_PRIVATE);
+            LinkedHashMap<String, Integer> rewards =
+                    parseTaskCoins(p.getString(KEY_TASK_COINS_PREFIX + date, ""));
+            Integer value = rewards.get(cleanTaskKey(taskOrHistoryEntry));
+            return value == null ? 0 : Math.max(0, value);
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private static LinkedHashMap<String, Integer> parseTaskCoins(String raw) {
+        LinkedHashMap<String, Integer> out = new LinkedHashMap<>();
+        if (raw == null || raw.trim().isEmpty()) return out;
+        for (String line : raw.split("\\n")) {
+            if (line == null || line.trim().isEmpty()) continue;
+            int tab = line.lastIndexOf('\t');
+            if (tab <= 0 || tab >= line.length() - 1) continue;
+            String task = line.substring(0, tab).trim();
+            try {
+                int coins = Integer.parseInt(line.substring(tab + 1).trim());
+                if (!task.isEmpty() && coins > 0) out.put(task, coins);
+            } catch (Throwable ignored) {
+            }
+        }
+        return out;
+    }
+
+    private static String cleanTaskKey(String raw) {
+        String clean = safe(raw).replace('\n', ' ').replace('\r', ' ').trim();
+        // History rows are stored as "HH:mm:ss  task name".
+        if (clean.matches("^\\d{2}:\\d{2}:\\d{2}\\s{2}.*$")) {
+            int sep = clean.indexOf("  ");
+            if (sep >= 0 && sep + 2 < clean.length()) {
+                clean = clean.substring(sep + 2).trim();
+            }
+        }
+        return clean.replace('\t', ' ');
     }
 
     private static void recordTodaySuccess(Context app, String task) {
