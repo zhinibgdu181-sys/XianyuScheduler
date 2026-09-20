@@ -184,4 +184,44 @@ public class FruitPlannerTest {
         assertTrue(plan.clicks.get(0).reason.startsWith("PAIR"));
     }
 
+
+    @Test
+    public void distinctTrayTypesClustersSameFruitButSeparatesDifferentFruit() {
+        FruitBoardState.Fruit redA = fruit(500, 1900, 240, 70, 70, 0);
+        FruitBoardState.Fruit redB = fruit(540, 1920, 238, 72, 72, 1);
+        FruitBoardState.Fruit blue = fruit(580, 1940, 60, 90, 230, 220);
+
+        FruitBoardState state = new FruitBoardState(
+                1080, 2400,
+                Arrays.asList(fruit(300, 800, 100, 180, 90, 120)),
+                Arrays.asList(redA, redB, blue)
+        );
+
+        assertTrue(FruitPlanner.distinctTrayTypes(state) == 2);
+    }
+
+    @Test
+    public void aggressiveTrayMatchIgnoresPhysicsButKeepsIdentityStrict() {
+        FruitBoardState.Fruit tray = fruit(540, 1900, 240, 70, 70, 0);
+        FruitBoardState.Fruit mate = fruit(320, 420, 239, 71, 71, 1);
+
+        FruitBoardState state = new FruitBoardState(
+                1080, 2400,
+                Arrays.asList(
+                        mate,
+                        fruit(320, 720, 70, 180, 80, 120),
+                        fruit(320, 980, 60, 90, 230, 220),
+                        fruit(760, 760, 230, 210, 40, 50)
+                ),
+                Arrays.asList(tray)
+        );
+
+        FruitPlanner.Plan plan = FruitPlanner.planAggressiveTrayMatch(
+                state, java.util.Collections.emptySet());
+
+        assertFalse(plan.isEmpty());
+        assertTrue(plan.clicks.size() == 1);
+        assertTrue("DEADLOCK_TRAY_MATCH".equals(plan.clicks.get(0).reason));
+    }
+
 }
