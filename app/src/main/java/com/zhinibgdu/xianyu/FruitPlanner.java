@@ -19,8 +19,8 @@ final class FruitPlanner {
     private static final double PAIR_MAX_DISTANCE = 0.32;
     private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.18;
     private static final double PAIR_AMBIGUITY_MARGIN = 0.012;
-    private static final double PAIR_RESCUE_MAX_DISTANCE = 0.50;
-    private static final double TRAY_MATCH_MAX_DISTANCE = 0.34;
+    private static final double PAIR_RESCUE_MAX_DISTANCE = 0.28;
+    private static final double TRAY_MATCH_MAX_DISTANCE = 0.24;
     private static final double MIN_DROP_SCORE = 0.44;
     private static final int MAX_DOWNWARD_BLOCKERS = 1;
     private static final int MAX_SEARCH_DEPTH = 14;
@@ -389,12 +389,22 @@ final class FruitPlanner {
                     bFirst ? fa.centerY : fb.centerY,
                     score
             );
-            if (bestIndex[j] == i) reciprocal.add(move);
-            else oneWay.add(move);
+            if (bestIndex[j] == i) {
+                reciprocal.add(move);
+            } else if (d <= PAIR_HIGH_CONFIDENCE_DISTANCE) {
+                // A one-way nearest neighbour is allowed only when identity is
+                // already high-confidence. This prevents rescue mode from pairing
+                // visually similar but different fruits (observed orange+tomato).
+                oneWay.add(move);
+            }
         }
 
-        List<Move> result = reciprocal.isEmpty() ? oneWay : reciprocal;
+        List<Move> result = new ArrayList<>(reciprocal);
+        result.addAll(oneWay);
         result.sort((a, b) -> Double.compare(b.score, a.score));
+        if (result.size() > 12) {
+            return new ArrayList<>(result.subList(0, 12));
+        }
         return result;
     }
 
@@ -540,7 +550,10 @@ final class FruitPlanner {
         for (FruitBoardState.Fruit board : state.boardFruits) {
             double drop = clickability(state, board);
             int below = downwardBlockers(state, board);
-            if (drop < MIN_DROP_SCORE || below > MAX_DOWNWARD_BLOCKERS) continue;
+            // Matching an already occupied collector is strategically valuable.
+            // Identity is stricter here, so allow a little more physical risk
+            // instead of switching to an unrelated rescue pair.
+            if (drop < 0.30 || below > 2) continue;
 
             double identity = Double.MAX_VALUE;
             for (FruitBoardState.Fruit tray : state.trayFruits) {

@@ -152,4 +152,12 @@ public class FruitPlannerTest {
         assertTrue(!first.actionKey().equals(second.actionKey()));
     }
 
+
+    @Test
+    public void unlockRewardPopupOcrTypoIsStillBlockingUi() {
+        assertTrue(FruitGameSolver.looksLikeBlockingFunctionPopupText(
+                "VERSION:1.0.2 剩小 202 解锁 解锁所有糟位 D使用 打乱 2%"
+        ));
+    }
+
 }
