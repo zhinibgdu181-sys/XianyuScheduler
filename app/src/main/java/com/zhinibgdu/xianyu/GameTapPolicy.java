@@ -38,20 +38,14 @@ final class GameTapPolicy {
         if ("PAIR_FIRST".equals(reason)
                 || "PAIR_SECOND".equals(reason)
                 || "TRAY_MATCH".equals(reason)
+                || "DEADLOCK_TRAY_MATCH".equals(reason)
                 || "UNLOCK".equals(reason)
                 || "水果游戏-V4.87-BOARD_PUSH".equals(reason)
                 || "水果游戏-V4.87-TRAY_MATCH".equals(reason)) {
             return ny >= .00 && ny <= .61;
         }
-        if ("IDLE_KEEPALIVE".equals(reason)
-                || "IDLE_BLANK_SWIPE".equals(reason)) {
-            return nx >= .08 && nx <= .92 && ny >= .08 && ny <= .58;
-        }
-        if ("WALL_KEEPALIVE_TAP".equals(reason)
-                || "WALL_KEEPALIVE_SWIPE".equals(reason)) {
-            boolean leftWall = nx >= .14 && nx <= .34;
-            boolean rightWall = nx >= .67 && nx <= .86;
-            return (leftWall || rightWall) && ny >= .74 && ny <= .84;
+        if ("FRUIT_DEADLOCK_SHUFFLE".equals(reason)) {
+            return nx >= .62 && nx <= .92 && ny >= .86 && ny <= .99;
         }
         return false;
     }
