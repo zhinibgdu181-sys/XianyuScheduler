@@ -210,7 +210,13 @@ final class FruitVisionEngine {
                     count * step * step,
                     meanR, meanG, meanB,
                     hsv[0], hsv[1], hsv[2],
-                    hueHist
+                    hueHist,
+                    buildVisualGrid(
+                            bitmap,
+                            (minX + maxX) / 2,
+                            (minY + maxY) / 2,
+                            Math.max(24, Math.min(44, Math.min(boxW, boxH) / 2))
+                    )
             ));
         }
 
@@ -309,7 +315,7 @@ final class FruitVisionEngine {
             int top,
             int bottom
     ) {
-        final int radius = Math.max(28, Math.min(54, bitmap.getWidth() / 18));
+        final int radius = Math.max(24, Math.min(42, bitmap.getWidth() / 26));
         int left = Math.max(0, cx - radius);
         int right = Math.min(bitmap.getWidth(), cx + radius);
         int upper = Math.max(top, cy - radius);
@@ -350,8 +356,59 @@ final class FruitVisionEngine {
                 count * 16,
                 meanR, meanG, meanB,
                 hsv[0], hsv[1], hsv[2],
-                hist
+                hist,
+                buildVisualGrid(bitmap, cx, cy, radius)
         );
+    }
+
+    /**
+     * Samples a 7x7 local appearance grid. Background cells are represented
+     * separately from colorful cells so two fruits with similar average colour
+     * but different internal patterns do not collapse into the same identity.
+     */
+    private static float[] buildVisualGrid(
+            Bitmap bitmap,
+            int cx,
+            int cy,
+            int radius
+    ) {
+        final int n = 7;
+        final float[] grid = new float[n * n * 3];
+        int index = 0;
+
+        for (int gy = 0; gy < n; gy++) {
+            float fy = ((gy + 0.5f) / n) * 2.0f - 1.0f;
+            int y = Math.max(0, Math.min(
+                    bitmap.getHeight() - 1,
+                    Math.round(cy + fy * radius)
+            ));
+
+            for (int gx = 0; gx < n; gx++) {
+                float fx = ((gx + 0.5f) / n) * 2.0f - 1.0f;
+                int x = Math.max(0, Math.min(
+                        bitmap.getWidth() - 1,
+                        Math.round(cx + fx * radius)
+                ));
+
+                int p = bitmap.getPixel(x, y);
+                int r = (p >> 16) & 0xff;
+                int g = (p >> 8) & 0xff;
+                int b = p & 0xff;
+
+                if (isFruitLikePixel(p)) {
+                    grid[index++] = r / 255.0f;
+                    grid[index++] = g / 255.0f;
+                    grid[index++] = b / 255.0f;
+                } else {
+                    // Preserve the local background signature, but compress it
+                    // so the blue playfield cannot dominate fruit identity.
+                    grid[index++] = 0.08f;
+                    grid[index++] = 0.10f;
+                    grid[index++] = 0.12f;
+                }
+            }
+        }
+        return grid;
     }
 
     private static int fruitSaliency(int pixel) {
