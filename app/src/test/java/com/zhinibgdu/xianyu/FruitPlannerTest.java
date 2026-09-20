@@ -68,7 +68,7 @@ public class FruitPlannerTest {
 
         FruitPlanner.Plan plan = FruitPlanner.plan(state);
         assertFalse(plan.isEmpty());
-        assertTrue(plan.reason.contains("执行一组后立即验证"));
+        assertTrue(plan.clicks.get(0).reason.startsWith("PAIR"));
     }
 
     @Test
