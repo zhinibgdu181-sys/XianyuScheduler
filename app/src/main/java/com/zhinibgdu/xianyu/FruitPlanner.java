@@ -16,8 +16,9 @@ import java.util.Set;
  * permission to blindly click stale coordinates.
  */
 final class FruitPlanner {
-    private static final double PAIR_MAX_DISTANCE = 0.20;
-    private static final double PAIR_AMBIGUITY_MARGIN = 0.035;
+    private static final double PAIR_MAX_DISTANCE = 0.30;
+    private static final double PAIR_HIGH_CONFIDENCE_DISTANCE = 0.17;
+    private static final double PAIR_AMBIGUITY_MARGIN = 0.006;
     private static final int MAX_SEARCH_DEPTH = 14;
     private static final long SEARCH_BUDGET_MS = 220L;
 
@@ -45,7 +46,7 @@ final class FruitPlanner {
                 return new Plan(
                         clicks,
                         best.score,
-                        "确认一组高置信度配对后立即验证"
+                        "候选配对=" + rootMoves.size() + "，执行最高分配对后立即验证"
                 );
             }
         }
@@ -163,9 +164,10 @@ final class FruitPlanner {
                 double similarity = a.similarityDistance(b);
                 if (similarity > PAIR_MAX_DISTANCE) continue;
 
-                // Trust a pair only when the two fruits are each other's clear
-                // nearest neighbour. This rejects broad local-patch colour
-                // matches that can point at the wrong fruit.
+                // Do not require reciprocal nearest-neighbour identity.
+                // The live board contains repeated fruit types; when three or
+                // more visually similar fruits exist, a legitimate pair can
+                // naturally fail a strict "each other's nearest" test.
                 double aBest = Double.MAX_VALUE;
                 double aSecond = Double.MAX_VALUE;
                 int aBestIndex = -1;
@@ -196,18 +198,34 @@ final class FruitPlanner {
                     }
                 }
 
-                if (aBestIndex != j || bBestIndex != i) continue;
-                if (aSecond - aBest < PAIR_AMBIGUITY_MARGIN) continue;
-                if (bSecond - bBest < PAIR_AMBIGUITY_MARGIN) continue;
+                boolean reciprocal = aBestIndex == j && bBestIndex == i;
+                boolean oneWayNearest = aBestIndex == j || bBestIndex == i;
+                boolean closeEnough = similarity <= PAIR_HIGH_CONFIDENCE_DISTANCE;
+                if (!reciprocal && !oneWayNearest && !closeEnough) continue;
+
+                double aMargin = aSecond == Double.MAX_VALUE
+                        ? 0.0 : aSecond - aBest;
+                double bMargin = bSecond == Double.MAX_VALUE
+                        ? 0.0 : bSecond - bBest;
+
+                // Only reject a highly ambiguous relaxed candidate when neither
+                // fruit considers the other its nearest match. This prevents the
+                // old 0-action deadlock while retaining a conservative first tier.
+                if (!reciprocal
+                        && !oneWayNearest
+                        && aMargin < PAIR_AMBIGUITY_MARGIN
+                        && bMargin < PAIR_AMBIGUITY_MARGIN) {
+                    continue;
+                }
 
                 boolean trayMatch = matchesTray(state, a) || matchesTray(state, b);
-                if (state.trayCount() >= 2 && !trayMatch) continue;
 
                 double score = similarityScore(similarity)
-                        + 0.22 * (accessA + clickability(state, b))
-                        + (trayMatch ? 0.16 : 0.0)
-                        + 0.35 * Math.min(1.0,
-                        (aSecond - aBest + bSecond - bBest) / 0.20);
+                        + 0.24 * (accessA + clickability(state, b))
+                        + (trayMatch ? 0.10 : 0.0)
+                        + (reciprocal ? 0.10 : 0.0)
+                        + 0.20 * Math.min(1.0,
+                        (aMargin + bMargin) / 0.12);
 
                 result.add(new Move(
                         i, j,
