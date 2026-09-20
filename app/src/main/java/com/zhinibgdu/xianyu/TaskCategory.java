@@ -2,11 +2,13 @@ package com.zhinibgdu.xianyu;
 
 /** Task routing is decided before any task button is clicked. */
 public enum TaskCategory {
-    ALL("自动任务"), LOCAL("闲鱼本地任务"), VIDEO("视频任务"), GAME("小游戏任务"), JUMP("跳转任务");
+    ALL("自动任务"), LOCAL("闲鱼本地任务"), VIDEO("视频任务"), JUMP("跳转任务");
     public final String label;
     TaskCategory(String label) { this.label = label; }
     public static TaskCategory fromMode(String mode) {
         if (mode == null || "auto".equals(mode)) return ALL;
+        // Reject stale pre-4.48.0 game-mode intents.
+        if ("GAME".equalsIgnoreCase(mode)) return null;
         try { return valueOf(mode); } catch (IllegalArgumentException e) { return null; }
     }
     /** Null means unknown, external, or unsupported. */
@@ -26,8 +28,10 @@ public enum TaskCategory {
         if (has(n, "看15秒视频领奖励", "看视频奖励", "看视频", "观看视频领取奖励",
                 "视频领奖励", "视频奖励", "看广告")) return VIDEO;
 
+        // Mini-game automation has been removed. Keep recognizing these
+        // titles only to reject them as unsupported instead of routing them.
         if (has(n, "消了还想", "还想消", "点点消", "消不停",
-                "水果", "麻将", "小游戏", "玩1关", "玩游戏")) return GAME;
+                "水果", "麻将", "小游戏", "玩1关", "玩游戏")) return null;
 
         // 只把明确属于闲鱼内部任务体系的名称归入 LOCAL。
         if (has(n, "签到", "点击指定频道好物", "指定频道好物",

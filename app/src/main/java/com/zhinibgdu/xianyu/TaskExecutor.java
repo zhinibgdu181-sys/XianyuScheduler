@@ -533,7 +533,7 @@ public final class TaskExecutor {
         lastCategoryExhaustedV438 = false;
         TaskCategory requested = activeCategory;
         TaskCategory[] categories = requested == TaskCategory.ALL
-                ? new TaskCategory[]{TaskCategory.LOCAL, TaskCategory.VIDEO, TaskCategory.GAME, TaskCategory.JUMP}
+                ? new TaskCategory[]{TaskCategory.LOCAL, TaskCategory.VIDEO, TaskCategory.JUMP}
                 : new TaskCategory[]{requested};
         for (int i = 0; i < categories.length; i++) {
             if (userAborted || gameIncompleteHoldV421) break;
@@ -635,21 +635,9 @@ public final class TaskExecutor {
 
         if (page.kind == PageKindV411.FRUIT_PAIR_GAME
                 || page.kind == PageKindV411.MAHJONG_PAIR_GAME) {
-            // 用户单独启动“小游戏任务”时，闲鱼可能恢复到上次未完成的
-            // 游戏页。此时直接交回对应 Solver，而不是把游戏页当未知页面
-            // 连续返回。ALL/其他分类仍保持原保护，不擅自操作遗留游戏。
-            if (activeCategory == TaskCategory.GAME) {
-                diagnostic("[游戏恢复V4.43.9] 小游戏模块检测到遗留游戏页，直接恢复求解："
-                        + page.kind);
-                boolean resumed = page.kind == PageKindV411.FRUIT_PAIR_GAME
-                        ? executeFruitPairGameV418(suPath, "去消了还想消玩1关")
-                        : executeMahjongPairGameV419(suPath, "点点消不停");
-                if (!resumed || userAborted || gameIncompleteHoldV421) return false;
-                // Solver 完成并受控返回后重新识别当前页；此调用不再属于
-                // fresh launch，因此不会重复进入遗留页恢复分支。
-                return enterViaMineCoin(suPath, false);
-            }
-            diagnostic("[游戏独占V4.26] 当前已经在小游戏页面，禁止导航流程把游戏当未知页退出");
+            // The mini-game task module was removed in 4.48.0. Never resume or
+            // solve a stale game page from the normal scheduler.
+            diagnostic("[小游戏已移除] 检测到遗留游戏页，不执行游戏求解器");
             return false;
         }
 
@@ -1732,7 +1720,6 @@ public final class TaskExecutor {
         switch (category) {
             case LOCAL: return AppConfig.isLocalTaskEnabled(context);
             case VIDEO: return AppConfig.isVideoTaskEnabled(context);
-            case GAME: return AppConfig.isGameTaskEnabled(context);
             case JUMP: return AppConfig.isJumpTaskEnabled(context);
             default: return false;
         }
@@ -1952,19 +1939,10 @@ public final class TaskExecutor {
                 }
 
                 long cooldownRemain = TaskProfileStoreV48.cooldownRemainingMsV411(c.name);
-                // 小游戏任务必须优先进入真实游戏执行器。
-                // 普通任务的失败冷却只用于防止反复点击外部/浏览任务；
-                // 不能因为历史冷却记录把仍显示“去完成”的小游戏直接过滤掉，
-                // 否则会出现“任务卡仍在，但候选任务=0，分类被错误判定完成”。
-                boolean gameTask = activeCategory == TaskCategory.GAME;
-                if (cooldownRemain > 0L && !gameTask) {
+                if (cooldownRemain > 0L) {
                     diagnostic("[冷却V4.11] 本轮暂不执行：" + c.name
                             + "，剩余约" + Math.max(1L, cooldownRemain / 1000L) + "秒");
                     continue;
-                }
-                if (cooldownRemain > 0L && gameTask) {
-                    diagnostic("[小游戏冷却旁路V4.44] 仍检测到小游戏任务“" + c.name
-                            + "”，忽略历史冷却，继续启动游戏执行器");
                 }
 
                 String attemptKey = normalizeTaskAttemptKeyV46(c.name);
@@ -3321,13 +3299,6 @@ public final class TaskExecutor {
             return executeMahjongPairGameV419(suPath, taskName);
         }
 
-        if (activeCategory == TaskCategory.GAME) {
-            diagnostic("[小游戏] 无法确认受支持的游戏页面，停止本轮并保留现场");
-            gameIncompleteHoldV421 = true;
-            gameIncompleteKindV421 = "UNKNOWN_GAME";
-            gameIncompleteTaskV421 = taskName;
-            return false;
-        }
         boolean isSearch = containsAny(taskName, "搜一搜", "搜索", "搜商品");
         boolean isBounce = isBounceTask(taskName);
         boolean isInternalBrowse = !isBounce
