@@ -3058,6 +3058,10 @@ public final class TaskExecutor {
             String taskName
     ) {
         if (userAborted || physicalTouchDetected || taskName == null) return false;
+        if (taskName.replaceAll("\\s+", "").contains("一键擦亮")) {
+            diagnostic("[领取奖励V4.49.1] 一键擦亮不参与闲鱼币领取，跳过");
+            return false;
+        }
 
         for (int pass = 0; pass < 4; pass++) {
             if (pass > 0 && !paceSleepV415(180L, 340L)) return false;

@@ -154,6 +154,7 @@ public final class TaskStatusReceiver {
             int coins
     ) {
         if (context == null || coins <= 0) return;
+        if (cleanTaskKey(task).contains("一键擦亮")) return;
         try {
             Context app = context.getApplicationContext();
             SharedPreferences p = app.getSharedPreferences(TODAY_PREFS, Context.MODE_PRIVATE);
