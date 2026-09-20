@@ -3590,6 +3590,34 @@ public final class TaskExecutor {
                                 }
 
                                 @Override
+                                public boolean swipe(
+                                        int x1, int y1,
+                                        int x2, int y2,
+                                        long durationMs,
+                                        String reason
+                                ) {
+                                    if (userAborted || physicalTouchDetected) return false;
+                                    if (!GameTapPolicy.allows(x1, y1, observedWidth, observedHeight, reason)
+                                            || !GameTapPolicy.allows(
+                                            x2, y2, observedWidth, observedHeight, reason)) {
+                                        diagnostic("[水果V4.45.5] 拒绝越界/非白名单滑动："
+                                                + reason + " "
+                                                + x1 + "," + y1 + "→" + x2 + "," + y2);
+                                        return false;
+                                    }
+                                    long duration = Math.max(120L, Math.min(420L, durationMs));
+                                    RootResult r = rootWithPath(
+                                            suPath,
+                                            "input swipe " + x1 + " " + y1 + " "
+                                                    + x2 + " " + y2 + " " + duration
+                                    );
+                                    diagnostic("[水果V4.45.5] 滑动 " + reason + " → "
+                                            + x1 + "," + y1 + "→" + x2 + "," + y2
+                                            + " / " + duration + "ms");
+                                    return r.exitCode == 0 && !userAborted;
+                                }
+
+                                @Override
                                 public boolean sleep(long minMs, long maxMs) {
                                     return paceSleepV415(minMs, maxMs);
                                 }
