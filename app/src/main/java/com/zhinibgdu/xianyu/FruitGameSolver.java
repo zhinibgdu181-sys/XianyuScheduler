@@ -85,6 +85,7 @@ public final class FruitGameSolver {
      * The solver should re-observe/replan instead of deliberately waiting.
      */
     private static final long MAX_IDLE_BETWEEN_ACTIONS_MS = 2_200L;
+    private static final long DEADLOCK_WAIT_MS = 2_000L;
     private static final int MAX_NO_PROGRESS = 8;
 
     private FruitGameSolver() {}
@@ -99,7 +100,8 @@ public final class FruitGameSolver {
         long lastActionAt = System.currentTimeMillis();
         int noProgress = 0;
         int replanCount = 0;
-        int blankRecoveryCount = 0;
+        long deadlockSince = 0L;
+        String deadlockTraySignature = "";
         FruitBoardState current = null;
         Set<String> failedActionKeys = new HashSet<>();
 
@@ -130,7 +132,8 @@ public final class FruitGameSolver {
                     replanCount++;
                     noProgress = 0;
                     failedActionKeys.clear();
-                    blankRecoveryCount = 0;
+                    deadlockSince = 0L;
+                    deadlockTraySignature = "";
                     host.sleep(220L, 360L);
                     continue;
                 }
@@ -217,16 +220,74 @@ public final class FruitGameSolver {
             }
 
             host.log("[水果识别诊断] " + FruitPlanner.diagnosticSummary(current));
-            FruitPlanner.Plan plan = FruitPlanner.plan(current, failedActionKeys);
+
+            int trayDistinct = FruitPlanner.distinctTrayTypes(current);
+            FruitPlanner.Plan aggressiveTrayPlan =
+                    FruitPlanner.planAggressiveTrayMatch(current, failedActionKeys);
+            boolean hasAggressiveTrayMatch = !aggressiveTrayPlan.isEmpty();
+            String traySignature = traySignature(current);
+            long decisionNow = System.currentTimeMillis();
+
+            boolean trayRisk = trayDistinct >= 2 && !hasAggressiveTrayMatch;
+            if (trayRisk) {
+                if (deadlockSince == 0L
+                        || !traySignature.equals(deadlockTraySignature)) {
+                    deadlockSince = decisionNow;
+                    deadlockTraySignature = traySignature;
+                    host.log("[水果死局计时] 槽内不同水果=" + trayDistinct
+                            + "，当前无可补齐同类；开始2秒忍耐计时");
+                }
+            } else {
+                deadlockSince = 0L;
+                deadlockTraySignature = "";
+            }
+
+            boolean criticalTray = trayDistinct >= 3 && !hasAggressiveTrayMatch;
+            boolean trayTimedOut = trayRisk
+                    && decisionNow - deadlockSince >= DEADLOCK_WAIT_MS;
+
+            FruitPlanner.Plan plan;
+            if (hasAggressiveTrayMatch && trayDistinct >= 2) {
+                plan = aggressiveTrayPlan;
+                host.log("[水果破局] 槽内已有" + trayDistinct
+                        + "种水果，优先强制补齐槽内同类");
+            } else {
+                plan = FruitPlanner.plan(current, failedActionKeys);
+            }
+
             host.log(String.format(
                     Locale.US,
-                    "[水果搜索] R=%d T=%d 路线点击=%d score=%.3f reason=%s",
+                    "[水果搜索] R=%d T=%d trayTypes=%d 路线点击=%d score=%.3f reason=%s",
                     current.boardFruits.size(),
                     current.trayCount(),
+                    trayDistinct,
                     plan.clicks.size(),
                     plan.score,
                     plan.reason
             ));
+
+            if (criticalTray || trayTimedOut) {
+                String why = criticalTray
+                        ? "槽内已有3种不同水果"
+                        : "槽内2种不同水果等待同类超过2秒";
+                host.log("[水果死局] " + why + "，禁止继续被动扫描");
+
+                // First priority is always a strict identity match to something
+                // already occupying the collector. Physics restrictions are
+                // relaxed, fruit identity is not.
+                if (!aggressiveTrayPlan.isEmpty()) {
+                    plan = aggressiveTrayPlan;
+                    host.log("[水果死局] 找到槽内严格同类，强制补齐而不是打乱");
+                } else if (tryDeadlockShuffle(host, current, why)) {
+                    lastActionAt = System.currentTimeMillis();
+                    failedActionKeys.clear();
+                    noProgress = 0;
+                    deadlockSince = 0L;
+                    deadlockTraySignature = "";
+                    host.sleep(650L, 900L);
+                    continue;
+                }
+            }
 
             if (plan.isEmpty()) {
                 ScreenOcr.Snapshot stuck = host.ocr("水果无安全动作确认");
@@ -241,24 +302,27 @@ public final class FruitGameSolver {
                     }
                 }
 
-                if (++noProgress >= MAX_NO_PROGRESS) {
-                    host.log("[水果新求解器] 连续无安全动作，结束本轮并保留现场；"
-                            + FruitPlanner.diagnosticSummary(current));
-                    return Result.SAFE_STOP_DIRTY;
+                if (deadlockSince == 0L) {
+                    deadlockSince = decisionNow;
+                    deadlockTraySignature = traySignature;
+                    host.log("[水果死局计时] 当前没有可靠Pair，开始2秒破局计时");
                 }
 
-                BlankRecoveryResult recovery = performBlankRecovery(
-                        current, host, blankRecoveryCount++
-                );
-                if (recovery.performed) {
-                    lastActionAt = System.currentTimeMillis();
-                    host.log("[水果空白恢复] 无安全水果可点，执行"
-                            + recovery.description);
-                } else {
-                    host.log("[水果空白恢复] 未找到可靠空白点击/滑动路径，仅重新识别");
+                if (decisionNow - deadlockSince >= DEADLOCK_WAIT_MS) {
+                    if (tryDeadlockShuffle(host, current, "连续2秒没有可靠Pair")) {
+                        lastActionAt = System.currentTimeMillis();
+                        failedActionKeys.clear();
+                        noProgress = 0;
+                        deadlockSince = 0L;
+                        deadlockTraySignature = "";
+                        host.sleep(650L, 900L);
+                        continue;
+                    }
                 }
 
-                host.sleep(420L, 650L);
+                noProgress++;
+                host.log("[水果死局计时] 尚未到2秒极限，立即重看棋盘，不执行空白点击/滑动");
+                host.sleep(100L, 160L);
                 continue;
             }
 
@@ -393,7 +457,8 @@ public final class FruitGameSolver {
                             + "，剩余=" + remainingBeforeAction + "->"
                             + remainingAfterAction);
                     failedActionKeys.clear();
-                    blankRecoveryCount = 0;
+                    deadlockSince = 0L;
+                    deadlockTraySignature = "";
                     noProgress = 0;
                     routeBroken = true;
                     current = null;
@@ -437,7 +502,8 @@ public final class FruitGameSolver {
                                 && afterCount <= beforeCount - 2;
                 boolean trayMatchStructural =
                         !remainingReadable
-                                && "TRAY_MATCH".equals(click.reason)
+                                && ("TRAY_MATCH".equals(click.reason)
+                                || "DEADLOCK_TRAY_MATCH".equals(click.reason))
                                 && plausibleStructuralDelta
                                 && current.trayCount() > 0
                                 && after.trayCount() < current.trayCount()
@@ -451,7 +517,8 @@ public final class FruitGameSolver {
                             + "，结构变化=" + structuralChange);
                     current = after;
                     failedActionKeys.clear();
-                    blankRecoveryCount = 0;
+                    deadlockSince = 0L;
+                    deadlockTraySignature = "";
                     noProgress = 0;
                     continue;
                 }
@@ -459,7 +526,8 @@ public final class FruitGameSolver {
                 boolean oneFruitEnteredCollector =
                         plausibleStructuralDelta
                                 && ("PAIR_SECOND".equals(click.reason)
-                                || "TRAY_MATCH".equals(click.reason))
+                                || "TRAY_MATCH".equals(click.reason)
+                                || "DEADLOCK_TRAY_MATCH".equals(click.reason))
                                 && (afterCount == beforeCount - 1
                                 || after.trayCount() == current.trayCount() + 1);
                 if (oneFruitEnteredCollector) {
@@ -469,7 +537,8 @@ public final class FruitGameSolver {
                             + " 槽位=" + current.trayCount() + "->" + after.trayCount());
                     current = after;
                     failedActionKeys.clear();
-                    blankRecoveryCount = 0;
+                    deadlockSince = 0L;
+                    deadlockTraySignature = "";
                     routeBroken = true;
                     noProgress = 0;
                     break;
@@ -489,16 +558,12 @@ public final class FruitGameSolver {
                 routeBroken = true;
                 noProgress++;
 
-                BlankRecoveryResult recovery = performBlankRecovery(
-                        current, host, blankRecoveryCount++
-                );
-                if (recovery.performed) {
-                    lastActionAt = System.currentTimeMillis();
-                    host.log("[水果空白恢复] 当前候选无效，执行"
-                            + recovery.description
-                            + "后换候选");
-                    host.sleep(260L, 420L);
+                if (deadlockSince == 0L) {
+                    deadlockSince = System.currentTimeMillis();
+                    deadlockTraySignature = traySignature(current);
                 }
+                host.log("[水果死局] 当前候选无效，加入黑名单并立即换候选；"
+                        + "达到2秒极限后改用打乱破局");
                 break;
             }
 
@@ -514,92 +579,65 @@ public final class FruitGameSolver {
         return Result.SAFE_STOP_DIRTY;
     }
 
-    /*
-     * Fixed keep-alive zones measured from the user-marked 709x1536 screenshot.
-     * They sit on the brick walls below the roofs, above the green buttons:
-     *
-     * left  ~= (0.24W, 0.795H)
-     * right ~= (0.785W, 0.795H)
-     *
-     * Because these areas are outside the falling-fruit field, recovery no
-     * longer depends on vision finding an empty patch among moving fruits.
-     */
-    private static BlankRecoveryResult performBlankRecovery(
-            FruitBoardState state,
+    private static boolean tryDeadlockShuffle(
             Host host,
-            int attempt
+            FruitBoardState state,
+            String reason
     ) {
-        if (state == null || state.width <= 0 || state.height <= 0) {
-            return BlankRecoveryResult.none();
+        if (host == null || state == null) return false;
+
+        ScreenOcr.Snapshot snapshot = host.ocr("水果死局破局-打乱");
+        if (snapshot == null || snapshot.isEmpty()) return false;
+
+        if (looksLikeTaskPanelText(snapshot.fullText)
+                || looksLikeFailedRound(snapshot.fullText)
+                || looksLikeCompletedRoundText(snapshot.fullText)
+                || looksLikeBlockingFunctionPopupText(snapshot.fullText)) {
+            return false;
         }
 
-        int phase = Math.floorMod(attempt, 4);
-
-        int leftTapX = Math.round(state.width * 0.24f);
-        int rightTapX = Math.round(state.width * 0.785f);
-        int tapY = Math.round(state.height * 0.795f);
-
-        if (phase == 0 || phase == 1) {
-            int x = phase == 0 ? leftTapX : rightTapX;
-            if (GameTapPolicy.allows(
-                    x, tapY, state.width, state.height,
-                    "WALL_KEEPALIVE_TAP")
-                    && host.tap(x, tapY, "WALL_KEEPALIVE_TAP")) {
-                return new BlankRecoveryResult(
-                        true,
-                        (phase == 0 ? "左墙固定点击 @" : "右墙固定点击 @")
-                                + x + "," + tapY
-                );
-            }
-            return BlankRecoveryResult.none();
-        }
-
-        int y = Math.round(state.height * 0.790f);
-        int x1;
-        int x2;
-        String side;
-
-        if (phase == 2) {
-            x1 = Math.round(state.width * 0.18f);
-            x2 = Math.round(state.width * 0.30f);
-            side = "左墙";
+        ScreenOcr.Item shuffle = findTextCandidate(snapshot, "打乱");
+        int x;
+        int y;
+        if (shuffle != null) {
+            x = shuffle.centerX();
+            y = shuffle.centerY();
+        } else if (containsAny(snapshot.fullText, "剩余", "剩小", "还剩")
+                && snapshot.fullText.contains("第1关")) {
+            // Stable fallback measured from the game layout. Only used after
+            // OCR confirms we are still on the live board.
+            x = Math.round(snapshot.width * 0.78f);
+            y = Math.round(snapshot.height * 0.935f);
         } else {
-            x1 = Math.round(state.width * 0.70f);
-            x2 = Math.round(state.width * 0.82f);
-            side = "右墙";
+            return false;
         }
 
-        if (GameTapPolicy.allows(
-                x1, y, state.width, state.height,
-                "WALL_KEEPALIVE_SWIPE")
-                && GameTapPolicy.allows(
-                x2, y, state.width, state.height,
-                "WALL_KEEPALIVE_SWIPE")
-                && host.swipe(
-                x1, y, x2, y,
-                220L, "WALL_KEEPALIVE_SWIPE")) {
-            return new BlankRecoveryResult(
-                    true,
-                    side + "固定短滑 "
-                            + x1 + "," + y + "→" + x2 + "," + y
-            );
+        if (!GameTapPolicy.allows(
+                x, y, snapshot.width, snapshot.height,
+                "FRUIT_DEADLOCK_SHUFFLE")) {
+            host.log("[水果死局] 找到打乱但坐标未通过安全白名单："
+                    + x + "," + y);
+            return false;
         }
 
-        return BlankRecoveryResult.none();
+        boolean ok = host.tap(x, y, "FRUIT_DEADLOCK_SHUFFLE");
+        if (ok) {
+            host.log("[水果死局] " + reason
+                    + " → 主动点击‘打乱’破局 @"
+                    + x + "," + y);
+        }
+        return ok;
     }
 
-    private static final class BlankRecoveryResult {
-        final boolean performed;
-        final String description;
-
-        BlankRecoveryResult(boolean performed, String description) {
-            this.performed = performed;
-            this.description = description == null ? "" : description;
+    private static String traySignature(FruitBoardState state) {
+        if (state == null || state.trayFruits.isEmpty()) return "EMPTY";
+        StringBuilder sb = new StringBuilder();
+        for (FruitBoardState.Fruit fruit : state.trayFruits) {
+            sb.append(Math.round(fruit.meanR / 16.0f)).append(',')
+                    .append(Math.round(fruit.meanG / 16.0f)).append(',')
+                    .append(Math.round(fruit.meanB / 16.0f)).append(';');
         }
-
-        static BlankRecoveryResult none() {
-            return new BlankRecoveryResult(false, "");
-        }
+        return sb.toString();
     }
 
     public static boolean looksLikeFruitGame(String text) {
