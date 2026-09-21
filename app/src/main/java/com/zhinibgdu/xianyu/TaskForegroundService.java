@@ -112,7 +112,7 @@ public class TaskForegroundService extends Service {
     private void finishAfterTaskExecutionV466() {
         if (destroyed || finishing) return;
 
-        // V4.50.2: no automatic 90-second teaching observer exists anymore.
+        // Foreground service ends immediately when task execution ends.
         // As soon as TaskExecutor finishes (including manual takeover), release
         // the service so a new task request cannot be blocked as a duplicate.
         finishing = true;
@@ -122,7 +122,7 @@ public class TaskForegroundService extends Service {
                 getApplicationContext(),
                 "INFO",
                 "调度",
-                "任务执行器已结束，立即停止前台服务；不保留90秒真人教学窗口"
+                "任务执行器已结束，立即停止前台服务"
         );
         stopServiceAfterCompletionSoundV472();
     }
