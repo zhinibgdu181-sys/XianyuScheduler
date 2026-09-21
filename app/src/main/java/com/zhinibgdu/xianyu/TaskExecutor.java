@@ -586,12 +586,12 @@ public final class TaskExecutor {
             freshLaunchV421 = true;
         }
 
-        // V4.50: opening ads must be handled before every task path.
-        // Previously polish started first, so an ad was classified as UNKNOWN_XIANYU
-        // and the navigator tried Back instead of clicking "跳过广告".
-        diagnostic("[启动广告V4.50] 任务开始前先检查闲鱼启动广告");
-        if (!dismissOpeningAdV47(suPath)) {
-            diagnostic("[启动广告V4.50] 广告处理未确认完成，继续使用安全页面探测");
+        // V4.50.6: every category shares one global preflight. Do not let
+        // polish/local/video/jump each invent its own recovery path.
+        if (!globalTaskPreflightV4506(suPath, "运行入口/" + activeCategory.label)) {
+            diagnostic("[全局前置V4.50.6] 未恢复到可安全继续的闲鱼页面，停止本轮执行");
+            sendStatus(activeCategory.label, "FAILED", "任务前置页面恢复失败");
+            return;
         }
 
         // V4.48.2: “一键擦亮” is an independent task card. Run it
@@ -635,7 +635,14 @@ public final class TaskExecutor {
             activeCategory = categories[i];
             diagnostic("[任务分类] 开始：" + activeCategory.label);
             notifyTask(ctx, activeCategory.label, "正在扫描任务");
-            if (i > 0 && !resetTaskPanelTop(suPath)) break;
+            if (i > 0) {
+                if (!globalTaskPreflightV4506(suPath, "分类切换/" + activeCategory.label)) {
+                    allEnabledCategoriesFinished = false;
+                    diagnostic("[全局前置V4.50.6] 分类切换前恢复失败，停止后续分类");
+                    break;
+                }
+                if (!resetTaskPanelTop(suPath)) break;
+            }
             completed += scanAndExecuteTasks(suPath, ctx);
             if (!lastCategoryExhaustedV438 && !userAborted && !gameIncompleteHoldV421) {
                 allEnabledCategoriesFinished = false;
@@ -1147,6 +1154,58 @@ public final class TaskExecutor {
         diagnostic("[极速导航V4.50.5] 已识别‘我的发布/宝贝管理’旧页面，执行一次受控右侧返回");
         if (!preferredRightBackOnceV410(suPath, "极速导航-退出我的发布旧页面")) return false;
         return sleepAbortableV48(420L);
+    }
+
+    private static boolean globalTaskPreflightV4506(String suPath, String stage) {
+        if (userAborted || physicalTouchDetected) return false;
+        diagnostic("[全局前置V4.50.6] " + stage + "：检查广告/残留页面/安全起点");
+
+        if (!dismissOpeningAdV47(suPath)) {
+            diagnostic("[全局前置V4.50.6] 启动广告未确认消失，继续页面探测");
+        }
+        if (userAborted || physicalTouchDetected) return false;
+
+        PageProbeV411 page = probePageV411(suPath, "全局前置/" + stage);
+        if (page == null) return false;
+
+        // Known stale surface: 我的发布 / 宝贝管理. Exit exactly once, then
+        // re-probe. This applies to ALL task categories, not only video.
+        if (recoverKnownMyListingsBeforeFastNavV4505(suPath, page)) {
+            page = probePageV411(suPath, "全局前置/退出我的发布后");
+            if (page == null) return false;
+        }
+
+        // Known safe Xianyu surfaces may continue. TASK_PANEL is especially
+        // valuable because downstream navigation can reuse it directly.
+        if (page.kind == PageKindV411.MINE
+                || page.kind == PageKindV411.XIANYU_HOME
+                || page.kind == PageKindV411.COIN_HOME
+                || page.kind == PageKindV411.TASK_PANEL) {
+            diagnostic("[全局前置V4.50.6] 已确认安全页面：" + page.kind);
+            return true;
+        }
+
+        // One conservative recovery only. Never loop blindly on an unknown page.
+        if (page.kind == PageKindV411.UNKNOWN_XIANYU) {
+            diagnostic("[全局前置V4.50.6] 闲鱼未知残留页，执行一次受控右侧返回");
+            if (!preferredRightBackOnceV410(suPath, "全局前置-未知残留页")) return false;
+            if (!sleepAbortableV48(420L)) return false;
+            page = probePageV411(suPath, "全局前置/受控返回后");
+            if (page == null) return false;
+            if (recoverKnownMyListingsBeforeFastNavV4505(suPath, page)) {
+                page = probePageV411(suPath, "全局前置/二次退出我的发布后");
+                if (page == null) return false;
+            }
+            boolean safe = page.kind == PageKindV411.MINE
+                    || page.kind == PageKindV411.XIANYU_HOME
+                    || page.kind == PageKindV411.COIN_HOME
+                    || page.kind == PageKindV411.TASK_PANEL;
+            diagnostic("[全局前置V4.50.6] 恢复后页面=" + page.kind + " safe=" + safe);
+            return safe;
+        }
+
+        diagnostic("[全局前置V4.50.6] 页面不可安全继续：" + page.kind);
+        return false;
     }
 
     private static boolean looksLikeOpeningAdV450(ScreenOcr.Snapshot ocr) {
