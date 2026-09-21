@@ -238,7 +238,7 @@ public final class TaskExecutor {
     }
 
     public static String getHumanLearningSummaryV450(Context context) {
-        if (context == null) return "尚未学习真人操作";
+        if (context == null) return "尚未学习手势细节";
         return HumanGestureStyleStore.summary(context.getApplicationContext());
     }
 
@@ -256,7 +256,7 @@ public final class TaskExecutor {
         if (suPath == null || suPath.isEmpty()) suPath = findSuPathWithRetry();
         if (suPath == null || suPath.isEmpty()) {
             standaloneHumanLearningV450 = false;
-            diagnostic("[学习真人V4.50] ROOT 不可用，无法启动触摸学习");
+            diagnostic("[手势细节学习V4.50] ROOT 不可用，无法启动触摸学习");
             return false;
         }
 
@@ -268,17 +268,17 @@ public final class TaskExecutor {
 
         if (touchMonitorThread == null || !touchMonitorThread.isAlive()) {
             standaloneHumanLearningV450 = false;
-            diagnostic("[学习真人V4.50] 未能启动触摸监听");
+            diagnostic("[手势细节学习V4.50] 未能启动触摸监听");
             return false;
         }
 
-        diagnostic("[学习真人V4.50.1] 已开始动作风格学习；仅闲鱼前台有效。"
+        diagnostic("[手势细节学习V4.50.1] 已开始动作风格学习；仅闲鱼前台有效。"
                 + "只记录单次点击/滑动的相对轨迹、时长、弧度、抖动和滑动距离；"
                 + "不学习任务流程、页面顺序或具体点击位置。");
         TaskStatusReceiver.writeLog(
                 lastContext,
                 "INFO",
-                "学习真人",
+                "手势细节学习",
                 "开始被动学习真人手势，仅记录闲鱼前台触摸"
         );
         return true;
@@ -293,7 +293,7 @@ public final class TaskExecutor {
             TaskStatusReceiver.writeLog(
                     lastContext,
                     "INFO",
-                    "学习真人",
+                    "手势细节学习",
                     "停止学习；" + HumanGestureStyleStore.summary(lastContext)
             );
         }
@@ -5840,7 +5840,7 @@ public final class TaskExecutor {
     }
 
     // V4.50.2: legacy automatic 90-second human-operation / fruit-teaching
-    // observers were removed. Explicit "学习真人" uses only the physical touch
+    // observers were removed. Explicit "手势细节学习" uses only the physical touch
     // monitor below and stores isolated relative gesture style samples.
 
     private static void startPhysicalTouchMonitorV48(String suPath) {
@@ -5850,7 +5850,7 @@ public final class TaskExecutor {
 
         String device = findTouchscreenDeviceV48(suPath);
         if (device == null || device.isEmpty()) {
-            diagnostic("[学习真人V4.50] 未识别到物理触摸设备");
+            diagnostic("[手势细节学习V4.50] 未识别到物理触摸设备");
             return;
         }
 
@@ -5864,7 +5864,7 @@ public final class TaskExecutor {
         physicalTouchMaxYV469 = touchMaxY;
         physicalTouchDevice = device;
 
-        diagnostic("[学习真人V4.50] 触摸设备=" + device
+        diagnostic("[手势细节学习V4.50] 触摸设备=" + device
                 + " raw=" + touchMaxX + "x" + touchMaxY
                 + " screen=" + screenW + "x" + screenH);
 
@@ -5887,7 +5887,7 @@ public final class TaskExecutor {
                         "getevent -lt " + device + " 2>/dev/null"
                 });
                 touchMonitorProcess = process;
-                diagnostic("[学习真人V4.50] getevent 已开始监听");
+                diagnostic("[手势细节学习V4.50] getevent 已开始监听");
 
                 BufferedReader reader = new BufferedReader(
                         new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
@@ -5942,7 +5942,7 @@ public final class TaskExecutor {
                         if (syntheticGestureActiveV4505
                                 || (now <= syntheticInputIgnoreUntilV411
                                 && now - lastSyntheticInputAtV411 <= 2200L)) {
-                            diagnostic("[学习真人V4.50] 忽略程序合成触摸尾事件");
+                            diagnostic("[手势细节学习V4.50] 忽略程序合成触摸尾事件");
                             continue;
                         }
 
@@ -5953,7 +5953,7 @@ public final class TaskExecutor {
                             String fg = getFg(suPath, false);
                             if (!TARGET_PACKAGE.equals(fg)) {
                                 gestureShouldLearn = false;
-                                diagnostic("[学习真人V4.50] 非闲鱼前台，不记录本次触摸：" + fg);
+                                diagnostic("[手势细节学习V4.50] 非闲鱼前台，不记录本次触摸：" + fg);
                                 continue;
                             }
                         } else {
@@ -5965,7 +5965,7 @@ public final class TaskExecutor {
                         }
 
                         gestureActive = true;
-                        // V4.50.1: only the explicit "学习真人" mode records gestures.
+                        // V4.50.1: only the explicit "手势细节学习" mode records gestures.
                         // A manual takeover during automation is a hard stop only; it
                         // must never start page/sequence teaching implicitly.
                         gestureShouldLearn = standaloneHumanLearningV450;
@@ -6009,7 +6009,7 @@ public final class TaskExecutor {
                                         screenH,
                                         trajectory
                                 );
-                                diagnostic("[学习真人V4.50] TAP "
+                                diagnostic("[手势细节学习V4.50] TAP "
                                         + endX + "," + endY
                                         + " hold=" + duration + "ms"
                                         + " points=" + trajectory.size());
@@ -6024,7 +6024,7 @@ public final class TaskExecutor {
                                         screenH,
                                         trajectory
                                 );
-                                diagnostic("[学习真人V4.50] SWIPE "
+                                diagnostic("[手势细节学习V4.50] SWIPE "
                                         + startX + "," + startY
                                         + "→" + endX + "," + endY
                                         + " duration=" + duration + "ms"
@@ -6048,13 +6048,13 @@ public final class TaskExecutor {
                     }
                     if (!userAborted && !running) break;
                     if (userAborted && !isHumanTeachingActiveV466()) {
-                        diagnostic("[学习真人V4.50] 真人学习窗口已结束，退出触摸监听");
+                        diagnostic("[手势细节学习V4.50] 真人学习窗口已结束，退出触摸监听");
                         break;
                     }
                 }
             } catch (Throwable t) {
                 if (running || userAborted || standaloneHumanLearningV450) {
-                    diagnostic("[学习真人V4.50] 触摸监听退出：" + t);
+                    diagnostic("[手势细节学习V4.50] 触摸监听退出：" + t);
                 }
             } finally {
                 if (process != null) {
@@ -7088,7 +7088,7 @@ public final class TaskExecutor {
         RootResult result = injectTouchPathV450(
                 suPath, target, mapped, duration, "TAP");
         if (result != null && result.exitCode == 0) {
-            diagnostic("[学习真人V4.50.1] 使用动作风格点击：target="
+            diagnostic("[手势细节学习V4.50.1] 使用动作风格点击：target="
                     + targetX + "," + targetY
                     + " landingOffset=" + landingDx + "," + landingDy
                     + " hold=" + duration + "ms"
@@ -7233,7 +7233,7 @@ public final class TaskExecutor {
             SwipeCurveMetricsV472 curve =
                     calculateSwipeCurveMetricsV472(
                             startX, startY, endX, endY, mapped);
-            diagnostic("[学习真人V4.50.1] 使用动作风格滑动："
+            diagnostic("[手势细节学习V4.50.1] 使用动作风格滑动："
                     + startX + "," + startY + "→" + endX + "," + endY
                     + " learnedLen=" + Math.round(learnedLen)
                     + " actualLen=" + Math.round(actualLen)
@@ -7350,7 +7350,7 @@ public final class TaskExecutor {
                 now + Math.max(1000L, durationMs + 850L);
         invalidateOcrCacheV411();
 
-        diagnostic("[学习真人V4.50.5] 注入真人轨迹 " + kind
+        diagnostic("[手势细节学习V4.50.5] 注入真人轨迹 " + kind
                 + " points=" + points.size() + " duration=" + durationMs + "ms");
         syntheticGestureActiveV4505 = true;
         try {
