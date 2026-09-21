@@ -42,8 +42,6 @@ public class MainActivity extends Activity {
     private static final int MAX_LOG_LINES = 120;
 
     private TextView scheduleStatusText;
-    private TextView runtimeStatusText;
-    private TextView statusDetailText;
     private LinearLayout gestureLearningCard;
     private TextView gestureLearningStatusText;
     private TextView gestureLearningDetailText;
@@ -105,8 +103,6 @@ public class MainActivity extends Activity {
         applySystemBarInsets();
 
         scheduleStatusText = findViewById(R.id.schedule_status_text);
-        runtimeStatusText = findViewById(R.id.runtime_status_text);
-        statusDetailText = findViewById(R.id.status_detail_text);
         gestureLearningCard = findViewById(R.id.gesture_learning_card);
         gestureLearningStatusText = findViewById(R.id.gesture_learning_status_text);
         gestureLearningDetailText = findViewById(R.id.gesture_learning_detail_text);
@@ -331,7 +327,8 @@ public class MainActivity extends Activity {
     }
 
     private void setStatusMessage(CharSequence message) {
-        if (statusDetailText != null) statusDetailText.setText(message);
+        // Home runtime-status card was removed. Important user feedback is shown
+        // through Toasts, task notifications and the Logs page instead.
     }
 
     private void refreshTodayCompleted() {
@@ -683,14 +680,12 @@ public class MainActivity extends Activity {
             return;
         }
         setStatusMessage("正在启动：" + category.label + "。\n运行期间请保持手机解锁；任务完成后会自动返回。");
-        setRuntimeState(true);
         try {
             TaskForegroundService.start(getApplicationContext(), category);
             Toast.makeText(this, "任务已启动", Toast.LENGTH_SHORT).show();
             handler.removeCallbacks(runningRefresh);
             handler.postDelayed(runningRefresh, 800L);
         } catch (Throwable t) {
-            setRuntimeState(false);
             setStatusMessage("启动任务失败：" + t.getClass().getSimpleName() + "：" + t.getMessage());
             Toast.makeText(this, "启动任务失败", Toast.LENGTH_LONG).show();
         }
@@ -826,25 +821,10 @@ public class MainActivity extends Activity {
         } else {
             scheduleStatusText.setText("每日任务：未启用");
         }
-        setRuntimeState(TaskExecutor.isRunning());
-    }
-
-    private void setRuntimeState(boolean running) {
-        if (running) {
-            runtimeStatusText.setText("任务运行中");
-            runtimeStatusText.setTextColor(0xFF1D4ED8);
-            runtimeStatusText.setBackgroundResource(R.drawable.bg_status_running);
-            setStatusMessage(TaskExecutor.getActiveCategoryLabel() + "正在执行。");
-        } else {
-            runtimeStatusText.setText("待执行");
-            runtimeStatusText.setTextColor(0xFF166534);
-            runtimeStatusText.setBackgroundResource(R.drawable.bg_status_idle);
-        }
     }
 
     private void showStatus(boolean userRequested) {
         boolean running = TaskExecutor.isRunning();
-        setRuntimeState(running);
         refreshGestureLearningCard();
 
         java.io.File dir = getExternalFilesDir(null);
