@@ -149,15 +149,6 @@ public final class TaskExecutor {
     private static volatile String currentExecutingTaskV464 = "";
     // V4.80: keep the verification baseline after immediate human takeover.
     private static volatile TaskVerificationSnapshotV411 lastTeachingBeforeV480;
-    private static volatile boolean humanTeachingStartedV464 = false;
-    private static volatile Thread humanTeachingThreadV464;
-    private static volatile long humanTeachingGenerationV464 = 0L;
-    // V4.67: generic passive gesture observer for every task category. It keeps
-    // the foreground service alive during the teaching window and never issues input.
-    private static volatile Thread humanOperationTeachingThreadV467;
-    private static volatile long humanOperationTeachingGenerationV467 = 0L;
-    private static final long HUMAN_TEACHING_WINDOW_MS_V464 = 90_000L;
-    private static final long HUMAN_TEACHING_SAMPLE_MS_V464 = 950L;
     private static volatile Process touchMonitorProcess;
     private static volatile Thread touchMonitorThread;
 
@@ -308,21 +299,14 @@ public final class TaskExecutor {
     }
 
     /**
-     * V4.66: 前台服务真正销毁时，立即终止真人教学观察。
-     * 教学线程不再拥有独立于服务生命周期的后台存活能力。
+     * V4.50.2: the legacy automatic 90-second teaching window was removed.
+     * The foreground service no longer waits for any teaching observer.
      */
     public static boolean isHumanTeachingActiveV466() {
-        Thread fruitThread = humanTeachingThreadV464;
-        Thread operationThread = humanOperationTeachingThreadV467;
-        boolean fruitActive = humanTeachingStartedV464
-                && fruitThread != null && fruitThread.isAlive();
-        boolean operationActive = operationThread != null && operationThread.isAlive();
-        return fruitActive || operationActive;
+        return false;
     }
 
     public static void stopHumanTeachingForServiceDestroyV466() {
-        stopHumanTeachingCaptureV464();
-        stopHumanOperationTeachingV467();
         stopPhysicalTouchMonitorV48();
     }
 
@@ -347,9 +331,6 @@ public final class TaskExecutor {
         } catch (Throwable ignored) {
         }
         stopPhysicalTouchMonitorV48();
-        // A prior 90s passive observer must never overlap a new automation run.
-        // In particular, its final ScreenOcr.close() must not race the new solver.
-        stopHumanTeachingCaptureV464();
         LegacyDataCleanup.remove(lastContext);
         activeCategory = category == null ? TaskCategory.ALL : category;
         running = true;
@@ -381,17 +362,12 @@ public final class TaskExecutor {
                 diagnostic("任务线程异常", t);
                 sendStatus("", "FAILED", "任务线程异常：" + t.getClass().getSimpleName());
             } finally {
-                // V4.67: after human takeover, keep the physical input reader alive
-                // for the passive teaching window. The foreground service owns its final
-                // shutdown; before V4.67 this finally block killed the observer too early.
-                if (!isHumanTeachingActiveV466()) {
-                    stopPhysicalTouchMonitorV48();
-                }
+                // V4.50.2: manual takeover is a hard stop only. There is no
+                // automatic 90-second observer to keep alive after execution.
+                stopPhysicalTouchMonitorV48();
                 running = false;
                 currentExecutingTaskV464 = "";
-                if (!isHumanTeachingThreadAliveV464()) {
-                    ScreenOcr.close();
-                }
+                ScreenOcr.close();
                 inBounceTask = false;
                 diagnostic("========== 任务结束 ==========");
                 notifyTask(lastContext, activeCategory.label, userAborted ? "任务已中止" : "任务已结束，已返回 APP");
@@ -5737,278 +5713,9 @@ public final class TaskExecutor {
         }
     }
 
-    /**
-     * V4.65: once a human takes over a fruit game, automation stops immediately.
-     *
-     * Teaching is passive and conservative:
-     * - it never generates a tap/swipe;
-     * - a transition is only admitted after the resulting structural state remains
-     *   stable for a second observation;
-     * - impossible/no-progress observations are audit-only and never reinforce memory;
-     * - the observer is generation-scoped so it cannot close ScreenOcr for a later run.
-     */
-    /**
-     * V4.67: generic 90s passive human-operation window for every task category.
-     * The observer itself does not touch the screen. Physical touch events are
-     * captured by the existing touchscreen monitor and stored as compact statistics.
-     */
-    private static synchronized void startHumanOperationTeachingV467() {
-        Thread old = humanOperationTeachingThreadV467;
-        if (old != null && old.isAlive()) return;
-
-        final Context context = lastContext;
-        if (context == null) return;
-
-        final long generation = ++humanOperationTeachingGenerationV467;
-        Thread thread = new Thread(() -> {
-            long deadline = SystemClock.elapsedRealtime() + HUMAN_TEACHING_WINDOW_MS_V464;
-            try {
-                HumanOperationExperienceStore.compact(context);
-                diagnostic("[真人经验V4.67] 开启90秒通用真人操作学习：点击偏差/滑动距离/角度/速度/节奏；不回放真人操作");
-                while (SystemClock.elapsedRealtime() < deadline
-                        && generation == humanOperationTeachingGenerationV467
-                        && !Thread.currentThread().isInterrupted()) {
-                    SystemClock.sleep(Math.min(1000L,
-                            Math.max(50L, deadline - SystemClock.elapsedRealtime())));
-                }
-            } catch (Throwable t) {
-                diagnostic("[真人经验V4.67] 通用学习线程退出", t);
-            } finally {
-                if (generation == humanOperationTeachingGenerationV467) {
-                    humanOperationTeachingThreadV467 = null;
-                    finalizeHumanTeachingOutcomeV480(context, cachedSuPath);
-                    diagnostic("[真人经验V4.67] 通用真人操作学习窗口结束；"
-                            + TeachingOutcomeStore.summary());
-                }
-            }
-        }, "XianyuHumanOperationTeaching-V467");
-        thread.setDaemon(true);
-        humanOperationTeachingThreadV467 = thread;
-        thread.start();
-    }
-
-    /**
-     * V4.80: after the passive 90s window, verify the task row once more.
-     * The window ending itself never implies success.
-     */
-    private static void finalizeHumanTeachingOutcomeV480(
-            Context context,
-            String suPath
-    ) {
-        if (context == null || suPath == null || suPath.isEmpty()) return;
-        if (!TeachingOutcomeStore.hasSession()) return;
-
-        String task = TeachingOutcomeStore.currentTask();
-        TaskVerificationSnapshotV411 before = lastTeachingBeforeV480;
-        if (task == null || task.isEmpty() || before == null) {
-            TeachingOutcomeStore.setTaskResult(
-                    context, TeachingOutcomeStore.UNKNOWN, "teaching_baseline_missing");
-            diagnostic("[真人经验V4.80] 教学会话终局无法绑定：baseline missing；保持 UNKNOWN");
-            return;
-        }
-
-        try {
-            TaskVerificationResultV411 verification =
-                    verifyTaskCompletionV411(suPath, task, false, before, true);
-            if (verification.verified) {
-                TeachingOutcomeStore.setTaskResult(
-                        context, TeachingOutcomeStore.SUCCESS, verification.reason);
-                FruitHumanExperienceStore.promoteCurrentSession(context);
-                HumanOperationExperienceStore.finalizeCurrentSessionOutcome(context);
-                diagnostic("[真人经验V4.80] 教学会话任务终局=SUCCESS："
-                        + TeachingOutcomeStore.summary());
-            } else {
-                TeachingOutcomeStore.setTaskResult(
-                        context, TeachingOutcomeStore.UNKNOWN, verification.reason);
-                HumanOperationExperienceStore.finalizeCurrentSessionOutcome(context);
-                diagnostic("[真人经验V4.80] 教学会话无法确认任务完成，终局=UNKNOWN："
-                        + verification.reason);
-            }
-        } catch (Throwable t) {
-            TeachingOutcomeStore.setTaskResult(
-                    context, TeachingOutcomeStore.UNKNOWN, "verification_exception");
-            HumanOperationExperienceStore.finalizeCurrentSessionOutcome(context);
-            diagnostic("[真人经验V4.80] 教学会话终局验证异常，保持 UNKNOWN", t);
-        }
-    }
-
-    private static synchronized void stopHumanOperationTeachingV467() {
-        ++humanOperationTeachingGenerationV467;
-        Thread thread = humanOperationTeachingThreadV467;
-        humanOperationTeachingThreadV467 = null;
-        if (thread != null) {
-            thread.interrupt();
-            if (thread != Thread.currentThread()) {
-                try { thread.join(350L); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-    }
-
-    private static synchronized void startHumanTeachingCaptureV464() {
-        Thread old = humanTeachingThreadV464;
-        if (old != null && old.isAlive()) return;
-
-        String task = currentExecutingTaskV464 == null ? "" : currentExecutingTaskV464;
-        String normalized = task.replaceAll("\\s+", "");
-        if (!(normalized.contains("消了还想") || normalized.contains("还想消玩1关"))) {
-            return;
-        }
-
-        final Context context = lastContext;
-        final String suPath = cachedSuPath;
-        if (context == null || suPath == null || suPath.isEmpty()) return;
-
-        final long generation = ++humanTeachingGenerationV464;
-        humanTeachingStartedV464 = true;
-        diagnostic("[真人经验V4.65] 自动操作已停止，开启90秒被动学习窗口；仅记录经验证的结构经验，不回放真人点击");
-
-        Thread thread = new Thread(() -> {
-            FruitGameSolver.TeachingStateV464 previous = null;
-            FruitGameSolver.TeachingStateV464 pendingBefore = null;
-            FruitGameSolver.TeachingStateV464 pendingAfter = null;
-            int learned = 0;
-            int unchangedSamples = 0;
-            boolean noProgressLogged = false;
-            long deadline = SystemClock.elapsedRealtime() + HUMAN_TEACHING_WINDOW_MS_V464;
-            try {
-                while (SystemClock.elapsedRealtime() < deadline
-                        && generation == humanTeachingGenerationV464) {
-                    FruitGameSolver.TeachingStateV464 current =
-                            FruitGameSolver.captureTeachingStateV464(context, suPath);
-                    if (current != null
-                            && generation == humanTeachingGenerationV464) {
-
-                        String rejected = previous == null
-                                ? null
-                                : FruitHumanExperienceStore.rejectReason(previous, current);
-                        if (rejected != null) {
-                            FruitHumanExperienceStore.recordRejectedObservation(
-                                    context, task, current, rejected);
-                            pendingBefore = null;
-                            pendingAfter = null;
-                            unchangedSamples = 0;
-                            noProgressLogged = false;
-                        } else {
-                            if (pendingAfter != null) {
-                                if (FruitHumanExperienceStore.sameStructuralState(pendingAfter, current)) {
-                                    FruitHumanExperienceStore.Transition transition =
-                                            FruitHumanExperienceStore.classify(
-                                                    pendingBefore.remaining, pendingAfter.remaining,
-                                                    pendingBefore.trayCount, pendingAfter.trayCount,
-                                                    pendingBefore.objects, pendingAfter.objects,
-                                                    pendingBefore.blocked, pendingAfter.blocked,
-                                                    pendingBefore.droppable, pendingAfter.droppable,
-                                                    pendingBefore.directPairs, pendingAfter.directPairs);
-                                    if (transition != null) {
-                                        // Always retain the structural transition as audit data.
-                                        // Promotion is deferred until the task outcome is SUCCESS.
-                                        FruitHumanExperienceStore.record(
-                                                context, task, pendingBefore, pendingAfter, transition);
-                                        if (TeachingOutcomeStore.taskReplayEligible()) {
-                                            learned++;
-                                            diagnostic("[真人经验V4.80] 已验证任务结果后收录水果经验："
-                                                    + transition.strategy);
-                                        } else {
-                                            diagnostic("[真人经验V4.80] 结构进展仅进入待定审计，未收录成功策略："
-                                                    + transition.strategy);
-                                        }
-                                    }
-                                    pendingBefore = null;
-                                    pendingAfter = null;
-                                } else {
-                                    // The board moved again before the candidate after-state
-                                    // was confirmed. Discard it instead of guessing which human
-                                    // action caused the later state.
-                                    pendingBefore = null;
-                                    pendingAfter = null;
-                                }
-                            }
-
-                            if (previous != null && pendingAfter == null) {
-                                FruitGameSolver.TeachingStateV464 currentBefore = previous;
-                                FruitHumanExperienceStore.Transition transition =
-                                        FruitHumanExperienceStore.classify(
-                                                currentBefore.remaining, current.remaining,
-                                                currentBefore.trayCount, current.trayCount,
-                                                currentBefore.objects, current.objects,
-                                                currentBefore.blocked, current.blocked,
-                                                currentBefore.droppable, current.droppable,
-                                                currentBefore.directPairs, current.directPairs);
-                                if (transition != null) {
-                                    // Keep the candidate pending even while TASK_RESULT is UNKNOWN.
-                                    // Final promotion is performed only after the 90s window verifies
-                                    // the task result as SUCCESS.
-                                    pendingBefore = currentBefore;
-                                    pendingAfter = current;
-                                } else if (FruitHumanExperienceStore.sameStructuralState(previous, current)) {
-                                    unchangedSamples++;
-                                    if (unchangedSamples >= 3 && !noProgressLogged) {
-                                        FruitHumanExperienceStore.recordRejectedObservation(
-                                                context, task, current,
-                                                "three_consecutive_samples_without_verified_progress");
-                                        noProgressLogged = true;
-                                    }
-                                } else {
-                                    unchangedSamples = 0;
-                                    noProgressLogged = false;
-                                }
-                            }
-                        }
-
-                        previous = current;
-                    }
-
-                    try {
-                        Thread.sleep(HUMAN_TEACHING_SAMPLE_MS_V464);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-            } catch (Throwable t) {
-                diagnostic("[真人经验V4.65] 被动学习异常", t);
-            } finally {
-                synchronized (TaskExecutor.class) {
-                    if (generation == humanTeachingGenerationV464
-                            && humanTeachingThreadV464 == Thread.currentThread()) {
-                        humanTeachingThreadV464 = null;
-                        humanTeachingStartedV464 = false;
-                        if (!running) {
-                            ScreenOcr.close();
-                        }
-                        FruitHumanExperienceStore.promoteCurrentSession(context);
-                        diagnostic("[真人经验V4.80] 学习窗口结束："
-                                + learned + " 个已验证任务经验；其余结构观察保持审计态，未直接回放");
-                    }
-                }
-            }
-        }, "XianyuHumanTeaching-V465");
-        thread.setDaemon(true);
-        humanTeachingThreadV464 = thread;
-        thread.start();
-    }
-
-    private static synchronized void stopHumanTeachingCaptureV464() {
-        humanTeachingGenerationV464++;
-        Thread thread = humanTeachingThreadV464;
-        humanTeachingThreadV464 = null;
-        humanTeachingStartedV464 = false;
-        if (thread != null && thread.isAlive()) {
-            thread.interrupt();
-            try {
-                thread.join(350L);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
-    private static boolean isHumanTeachingThreadAliveV464() {
-        Thread thread = humanTeachingThreadV464;
-        return thread != null && thread.isAlive();
-    }
+    // V4.50.2: legacy automatic 90-second human-operation / fruit-teaching
+    // observers were removed. Explicit "学习真人" uses only the physical touch
+    // monitor below and stores isolated relative gesture style samples.
 
     private static void startPhysicalTouchMonitorV48(String suPath) {
         stopPhysicalTouchMonitorV48();
