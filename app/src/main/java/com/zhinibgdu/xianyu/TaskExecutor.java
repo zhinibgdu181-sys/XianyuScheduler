@@ -1489,17 +1489,16 @@ public final class TaskExecutor {
             String xml,
             ScreenOcr.Snapshot ocr
     ) {
-        // XML 能明确看到真实任务按钮时仍然直接接受。
+        // OCR-confirmed ad/exit dialog has priority over XML. WebView XML can expose
+        // generic “领取奖励” nodes and previously caused a false TASK_PANEL match.
+        String text = combinedTextV45(null, ocr);
+        if (!text.isEmpty() && looksLikeAdOrInstallPageV47(text)) return false;
+
+        // XML can confirm the task panel only when the visible OCR frame is not ad-like.
         if (isRealTaskPage(xml)) return true;
 
         if (ocr == null || ocr.isEmpty()) return false;
-
-        String text = combinedTextV45(null, ocr);
         if (text.isEmpty()) return false;
-
-        // 广告/试玩页里经常出现“继续试玩才能领取奖励”等文案，
-        // 不能再仅凭“领取奖励”四个字判断为闲鱼任务面板。
-        if (looksLikeAdOrInstallPageV47(text)) return false;
 
         boolean hasHeader = text.contains("得骰子赚闲鱼币");
         boolean hasRewardTag = text.contains("收益+10%")
@@ -1578,10 +1577,21 @@ public final class TaskExecutor {
         int score = 0;
         if (text.contains("试玩") || text.contains("继续试玩")) score++;
         if (text.contains("免费下载") || text.contains("立即下载")) score++;
-        if (text.contains("点击/滑动前往跳转或下载应用")) score += 2;
+        if (text.contains("点击/滑动前往跳转或下载应用")
+                || text.contains("上滑或点击跳转到详情页或第三方应用")
+                || (text.contains("第三方应用") && text.contains("上滑"))) score += 2;
         if (text.contains("广告")) score++;
         if (text.contains("应用详情") || text.contains("版本号：") || text.contains("开发者：")) score += 2;
+        if (looksLikeVideoExitPromptV485(text)) score += 3;
+        if (text.contains("去体验15秒可立即领奖") || text.contains("体验15秒可立即领奖")) score += 2;
         return score >= 2;
+    }
+
+    private static boolean looksLikeVideoExitPromptV485(String text) {
+        if (text == null || text.isEmpty()) return false;
+        String n = text.replaceAll("\\s+", "");
+        return (n.contains("确定要退出吗") || n.contains("坚持退出"))
+                && (n.contains("去领取奖励") || n.contains("领取奖励"));
     }
 
     private static boolean waitMinePageV45(String suPath, long timeout) {
@@ -3539,6 +3549,10 @@ public final class TaskExecutor {
 
     private static String canonicalTaskKeyV411(String task) {
         String n = normalizeTaskAttemptKeyV46(task == null ? "" : task);
+        n = normalizeTaskOcrTextV483(n)
+                .replace("商城坡", "商城")
+                .replace("商坡", "商城")
+                .replace("商成", "商城");
         return n.replaceAll("[\\s\\p{Punct}，。！？；：、（）()【】\\[\\]·]+", "");
     }
 
@@ -4785,6 +4799,10 @@ public final class TaskExecutor {
 
         // Fast OCR check first.
         ScreenOcr.Snapshot ocr = captureOcrV45(suPath, "恢复快速检查");
+        if (looksLikeVideoExitPromptV485(combinedTextV45(null, ocr))) {
+            diagnostic("[恢复V4.85] 当前仍是视频退出确认框，不能误判/重建导航");
+            return false;
+        }
         if (isTaskPageV45(null, ocr)) return true;
 
         // If we are on a system jump/open-app dialog, Back is faster than a
@@ -5691,6 +5709,41 @@ public final class TaskExecutor {
         return false;
     }
 
+    private static boolean handleVideoExitPromptV485(
+            String suPath,
+            ScreenOcr.Snapshot snapshot,
+            String taskName
+    ) {
+        if (snapshot == null || snapshot.isEmpty()) return false;
+        String text = combinedTextV45(null, snapshot);
+        if (!looksLikeVideoExitPromptV485(text)) return false;
+
+        diagnostic("[视频退出V4.85] 检测到“去领取奖励/坚持退出”确认框，优先领取奖励");
+        if (!clickOcrTextAnyV45(suPath, snapshot, false, "去领取奖励")) {
+            diagnostic("[视频退出V4.85] 未能点击“去领取奖励”，不把确认框误判为任务面板");
+            return false;
+        }
+
+        invalidateOcrCacheV411();
+        ScreenOcr.Snapshot after = captureOcrV45(suPath, "视频点击去领取奖励后确认");
+        if (isTaskPageV45(null, after)) {
+            diagnostic("[视频退出V4.85] ✅ 点击“去领取奖励”后已回任务面板");
+            return true;
+        }
+
+        String afterText = combinedTextV45(null, after);
+        if (containsAny(afterText, "领取成功", "恭喜获得奖励", "已领取", "奖励已到账")) {
+            diagnostic("[视频退出V4.85] 已出现奖励成功提示，执行一次边缘返回并确认任务面板");
+            preferredRightBackOnceV410(suPath, "视频奖励成功后返回任务面板");
+            SystemClock.sleep(220L);
+            invalidateOcrCacheV411();
+            ScreenOcr.Snapshot panel = captureOcrV45(suPath, "视频奖励成功后任务面板确认");
+            if (isTaskPageV45(null, panel)) return true;
+        }
+
+        return false;
+    }
+
     /** One edge-back gesture; callers verify the resulting page before continuing. */
     private static boolean preferredRightBackOnceV410(String suPath, String reason) {
         if (userAborted) return false;
@@ -5757,8 +5810,12 @@ public final class TaskExecutor {
         }
 
         String postDoubleText = combinedTextV45(null, ocr);
+        if (handleVideoExitPromptV485(suPath, ocr, taskName)) {
+            TaskProfileStoreV48.setReturnSwipes(taskName, 2);
+            return true;
+        }
         if (looksLikeAdOrInstallPageV47(postDoubleText)) {
-            diagnostic("[视频快速双返回V4.82] 双滑后仍为广告页，立即补第3次右滑");
+            diagnostic("[视频快速双返回V4.85] 双滑后仍为广告/退出确认页，执行受控第3次右滑");
             SystemClock.sleep(90L);
             RootResult third = rootWithPath(suPath, gesture);
             if (third.exitCode == 0 && !userAborted) {
@@ -5767,7 +5824,10 @@ public final class TaskExecutor {
                 ScreenOcr.Snapshot thirdOcr =
                         captureOcrV45(suPath, "视频第3次返回后任务面板确认");
                 if (isTaskPageV45(null, thirdOcr)) {
-                    diagnostic("[视频快速双返回V4.82] ✅ 第3次右滑后已确认任务面板");
+                    diagnostic("[视频快速双返回V4.85] ✅ 第3次右滑后已确认任务面板");
+                    return true;
+                }
+                if (handleVideoExitPromptV485(suPath, thirdOcr, taskName)) {
                     return true;
                 }
             }
@@ -6116,7 +6176,7 @@ public final class TaskExecutor {
                     }
                     if (!userAborted && !running) break;
                     if (userAborted && !isHumanTeachingActiveV466()) {
-                        diagnostic(touchLogPrefix + "真人学习窗口已结束，退出触摸监听");
+                        diagnostic(touchLogPrefix + "触摸监听已结束");
                         break;
                     }
                 }
