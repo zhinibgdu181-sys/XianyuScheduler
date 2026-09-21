@@ -389,7 +389,7 @@ public final class TaskExecutor {
         final long deadline = SystemClock.elapsedRealtime() + 9000L;
 
         try {
-            diagnostic("[完成] 所有任务分类均已确认完成，开始返回定时任务 APP");
+            diagnostic("[完成] 所有已开启任务分类均已确认完成，开始返回定时任务 APP");
 
             // 普通 startActivity() 在 Android 新版本上可能受到后台启动限制。
             // 这里优先使用已经验证可用的 Root shell 直接启动 MainActivity，
@@ -3339,13 +3339,26 @@ public final class TaskExecutor {
             return false;
         }
 
-        for (int pass = 0; pass < 4; pass++) {
-            if (pass > 0 && !paceSleepV415(180L, 340L)) return false;
+        // Reuse the task-panel frame that verification just captured, then allow
+        // at most one fresh OCR refresh. Four full OCR passes cost ~10s on this device
+        // and are unnecessary because the normal scanner will see a delayed claim later.
+        for (int pass = 0; pass < 2; pass++) {
+            if (pass > 0 && !paceSleepV415(120L, 220L)) return false;
             if (userAborted || physicalTouchDetected || !ensureFg(suPath)) return false;
 
-            invalidateOcrCacheV411();
-            ScreenOcr.Snapshot ocr = captureOcrV45(
-                    suPath, "任务完成后领取奖励#" + (pass + 1));
+            ScreenOcr.Snapshot ocr;
+            if (pass == 0) {
+                ocr = freshTaskPanelOcrV415();
+                if (ocr != null && !ocr.isEmpty()) {
+                    diagnostic("[领取奖励V4.83] 复用刚确认的任务面板OCR");
+                } else {
+                    invalidateOcrCacheV411();
+                    ocr = captureOcrV45(suPath, "任务完成后领取奖励#1");
+                }
+            } else {
+                invalidateOcrCacheV411();
+                ocr = captureOcrV45(suPath, "任务完成后领取奖励#2");
+            }
 
             if (ocr == null || ocr.isEmpty() || !isTaskPageV45(null, ocr)) {
                 diagnostic("[领取奖励V4.49] 当前未确认任务面板，停止立即领取："
