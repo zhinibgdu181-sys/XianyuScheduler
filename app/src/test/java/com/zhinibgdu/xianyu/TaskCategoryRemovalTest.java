@@ -3,21 +3,20 @@ package com.zhinibgdu.xianyu;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
 
 public class TaskCategoryRemovalTest {
 
     @Test
-    public void oldGameModeIntentIsRejected() {
-        assertNull(TaskCategory.fromMode("GAME"));
+    public void gameModeIntentIsAccepted() {
+        assertEquals(TaskCategory.GAME, TaskCategory.fromMode("GAME"));
     }
 
     @Test
-    public void gameTitlesAreUnsupported() {
-        assertNull(TaskCategory.classify("去消了还想消玩1关"));
-        assertNull(TaskCategory.classify("点点消不停"));
-        assertNull(TaskCategory.classify("水果小游戏"));
-        assertNull(TaskCategory.classify("麻将小游戏"));
+    public void gameTitlesAreRoutedToGameCategory() {
+        assertEquals(TaskCategory.GAME, TaskCategory.classify("去消了还想消玩1关"));
+        assertEquals(TaskCategory.GAME, TaskCategory.classify("点点消不停"));
+        assertEquals(TaskCategory.GAME, TaskCategory.classify("水果小游戏"));
+        assertEquals(TaskCategory.GAME, TaskCategory.classify("麻将小游戏"));
     }
 
     @Test
