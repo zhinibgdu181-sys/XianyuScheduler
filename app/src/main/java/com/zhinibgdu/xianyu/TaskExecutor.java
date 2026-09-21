@@ -2173,7 +2173,7 @@ public final class TaskExecutor {
             case POLISH: return AppConfig.isPolishTaskEnabled(context);
             case LOCAL: return AppConfig.isLocalTaskEnabled(context);
             case VIDEO: return AppConfig.isVideoTaskEnabled(context);
-            case JUMP: return AppConfig.isGameTaskEnabled(context);
+            case GAME: return AppConfig.isGameTaskEnabled(context);
             default: return false;
         }
     }
