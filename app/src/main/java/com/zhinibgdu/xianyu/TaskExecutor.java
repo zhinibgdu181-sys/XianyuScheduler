@@ -637,8 +637,9 @@ public final class TaskExecutor {
             completed += scanAndExecuteTasks(suPath, ctx);
             if (!lastCategoryExhaustedV438 && !userAborted && !gameIncompleteHoldV421) {
                 allEnabledCategoriesFinished = false;
-                diagnostic("[任务分类] " + activeCategory.label + " 尚未确认完成，禁止提前返回定时任务 APP");
-                break;
+                diagnostic("[任务分类] " + activeCategory.label
+                        + " 尚未确认完成；保留未完成状态，但继续执行后续已开启分类");
+                continue;
             }
         }
 
@@ -4563,11 +4564,15 @@ public final class TaskExecutor {
             String taskName
     ) {
 
+        long parsedVideoMs = explicitSecondsRequirementV415(taskName);
+        long requiredVideoMs = parsedVideoMs > 0L ? parsedVideoMs : 15000L;
+        long exitThresholdMs = requiredVideoMs + 200L;
         TaskProfileStoreV48.StrategyV49 videoStrategy =
-                TaskProfileStoreV48.chooseStrategyV49(taskName, 15500L, true, true);
-        // 15s video tasks: keep the required dwell, but recovery must begin immediately afterwards.
-        long videoTimeout = 24000L;
-        diagnostic("[视频策略V4.11] " + videoStrategy.describe()
+                TaskProfileStoreV48.chooseStrategyV49(
+                        taskName, requiredVideoMs + 500L, true, true);
+        long videoTimeout = Math.min(129000L, requiredVideoMs + 9000L);
+        diagnostic("[视频策略V4.82] " + videoStrategy.describe()
+                + " / required=" + requiredVideoMs + "ms"
                 + " / timeout=" + videoTimeout + "ms");
 
         long start = SystemClock.elapsedRealtime();
@@ -4593,7 +4598,7 @@ public final class TaskExecutor {
                 diagnostic("[视频] 当前离开闲鱼：" + printableFg(fg));
                 long elapsed = SystemClock.elapsedRealtime() - start;
 
-                if (elapsed >= 15000L) {
+                if (elapsed >= requiredVideoMs) {
                     TaskProfileStoreV48.recordRecovery(taskName, "video_external:" + printableFg(fg));
                     attemptedReturn = true;
                     if (!doubleSwipeDone) {
@@ -4606,21 +4611,25 @@ public final class TaskExecutor {
                 continue;
             }
 
-            // Once the required 15s dwell has elapsed, start exit immediately.
-            // Do not wait for another ad OCR match; that was the source of long 40s+ stalls.
+            // Once the required dwell has elapsed, start exit immediately.
+            // Do not wait for another ad OCR match; that was the source of long stalls.
             long elapsedBeforeOcr = SystemClock.elapsedRealtime() - start;
-            if (elapsedBeforeOcr >= 15200L && !doubleSwipeDone) {
+            if (elapsedBeforeOcr >= exitThresholdMs && !doubleSwipeDone) {
                 attemptedReturn = true;
                 TaskProfileStoreV48.recordRecovery(taskName, "video_dwell_complete_fast_exit");
-                diagnostic("[视频快速退出V4.81] 已满足15秒，立即执行连续双右滑，不再等待广告OCR/总超时");
+                diagnostic("[视频快速退出V4.82] 已满足观看时间 "
+                        + requiredVideoMs + "ms，立即执行连续右滑退出");
                 doubleSwipeDone = fastDoubleRightBackV420(
                         suPath, taskName, "视频达到最低观看时间后的立即退出");
                 if (doubleSwipeDone) return true;
                 // If the double gesture did not land on the task panel, verify/recover now.
-                if (recoverToXianyuTaskPanelV47(suPath, "视频15秒后立即恢复任务面板")) return true;
+                if (recoverToXianyuTaskPanelV47(suPath, "视频达到观看时间后立即恢复任务面板")) return true;
             }
 
-            // OCR is used only while waiting for the required dwell or for verification.
+            // OCR is expensive. Before the required dwell, sample only occasionally.
+            if (elapsedBeforeOcr < requiredVideoMs && loop % 5 != 0) {
+                continue;
+            }
             ScreenOcr.Snapshot ocr = captureOcrV45(suPath, "视频快速轮询");
             String combined = combinedTextV45(null, ocr);
 
@@ -4629,10 +4638,10 @@ public final class TaskExecutor {
                 long elapsed = SystemClock.elapsedRealtime() - start;
                 diagnostic("[视频] 检测到广告/试玩页，elapsed=" + elapsed + "ms");
 
-                if (elapsed >= 15000L && !doubleSwipeDone) {
+                if (elapsed >= requiredVideoMs && !doubleSwipeDone) {
                     attemptedReturn = true;
                     TaskProfileStoreV48.recordRecovery(taskName, "video_ad_fast_double_back");
-                    diagnostic("[视频广告恢复V4.42.3] 已达到15秒，立即快速连续双右滑返回");
+                    diagnostic("[视频广告恢复V4.42.3] 已达到要求观看时间，立即快速连续双右滑返回");
                     doubleSwipeDone = fastDoubleRightBackV420(
                             suPath, taskName, "视频广告页达到最低观看时间后的快速双滑");
                     if (doubleSwipeDone) return true;
@@ -4643,9 +4652,9 @@ public final class TaskExecutor {
 
             if (isTaskPageV45(null, ocr)) {
                 long elapsed = SystemClock.elapsedRealtime() - start;
-                if (elapsed >= 15000L) {
+                if (elapsed >= requiredVideoMs) {
                     taskPanelSeenAfterWatchV420 = true;
-                    diagnostic("[视频] ✅ 已观看至少15秒并回到真实任务面板，停止继续返回");
+                    diagnostic("[视频] ✅ 已满足要求观看时间并回到真实任务面板，停止继续返回");
                     return true;
                 }
                 diagnostic("[视频] 已回任务面板但观看时间不足：" + elapsed
@@ -4657,9 +4666,9 @@ public final class TaskExecutor {
             if (loop % 4 == 0) {
                 String xml = dumpUi(suPath);
                 long elapsed = SystemClock.elapsedRealtime() - start;
-                if (elapsed >= 15000L && isTaskPageV45(xml, ocr)) {
+                if (elapsed >= requiredVideoMs && isTaskPageV45(xml, ocr)) {
                     taskPanelSeenAfterWatchV420 = true;
-                    diagnostic("[视频] ✅ XML确认已观看至少15秒并回到真实任务面板，停止继续返回");
+                    diagnostic("[视频] ✅ XML确认已满足要求观看时间并回到真实任务面板，停止继续返回");
                     return true;
                 }
                 if (isTaskPageV45(xml, ocr)) {
@@ -5702,6 +5711,23 @@ public final class TaskExecutor {
         if (isTaskPageV45(null, ocr)) {
             diagnostic("[视频快速双返回V4.20] ✅ 连续双滑后已确认任务面板");
             return true;
+        }
+
+        String postDoubleText = combinedTextV45(null, ocr);
+        if (looksLikeAdOrInstallPageV47(postDoubleText)) {
+            diagnostic("[视频快速双返回V4.82] 双滑后仍为广告页，立即补第3次右滑");
+            SystemClock.sleep(90L);
+            RootResult third = rootWithPath(suPath, gesture);
+            if (third.exitCode == 0 && !userAborted) {
+                TaskProfileStoreV48.setReturnSwipes(taskName, 3);
+                SystemClock.sleep(140L);
+                ScreenOcr.Snapshot thirdOcr =
+                        captureOcrV45(suPath, "视频第3次返回后任务面板确认");
+                if (isTaskPageV45(null, thirdOcr)) {
+                    diagnostic("[视频快速双返回V4.82] ✅ 第3次右滑后已确认任务面板");
+                    return true;
+                }
+            }
         }
 
         String fg = getFg(suPath, false);
