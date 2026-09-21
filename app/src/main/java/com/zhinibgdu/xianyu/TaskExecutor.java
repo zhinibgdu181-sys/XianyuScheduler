@@ -263,7 +263,7 @@ public final class TaskExecutor {
         cachedSuPath = suPath;
         standaloneHumanLearningV450 = true;
         standaloneHumanLearningStartedAtV450 = SystemClock.elapsedRealtime();
-        startPhysicalTouchMonitorV48(suPath);
+        // Legacy human-learning/getevent startup removed. Automation no longer starts gesture learning.
 
         if (touchMonitorThread == null || !touchMonitorThread.isAlive()) {
             standaloneHumanLearningV450 = false;
@@ -327,14 +327,7 @@ public final class TaskExecutor {
             return;
         }
         lastContext = context.getApplicationContext();
-        // Automation and passive learning never run at the same time. Otherwise
-        // synthetic touches could pollute the human profile.
-        standaloneHumanLearningV450 = false;
-        try {
-            context.stopService(new Intent(context, HumanLearningForegroundService.class));
-        } catch (Throwable ignored) {
-        }
-        stopPhysicalTouchMonitorV48();
+        // Legacy human-learning service integration removed.
         LegacyDataCleanup.remove(lastContext);
         activeCategory = category == null ? TaskCategory.ALL : category;
         running = true;
@@ -366,9 +359,6 @@ public final class TaskExecutor {
                 diagnostic("任务线程异常", t);
                 sendStatus("", "FAILED", "任务线程异常：" + t.getClass().getSimpleName());
             } finally {
-                // V4.50.2: manual takeover is a hard stop only. There is no
-                // automatic 90-second observer to keep alive after execution.
-                stopPhysicalTouchMonitorV48();
                 running = false;
                 currentExecutingTaskV464 = "";
                 ScreenOcr.close();
@@ -4562,8 +4552,9 @@ public final class TaskExecutor {
     ) {
 
         TaskProfileStoreV48.StrategyV49 videoStrategy =
-                TaskProfileStoreV48.chooseStrategyV49(taskName, 22000L, true, true);
-        long videoTimeout = Math.max(35000L, Math.min(55000L, videoStrategy.waitMs + 22000L));
+                TaskProfileStoreV48.chooseStrategyV49(taskName, 15500L, true, true);
+        // 15s video tasks: keep the required dwell, but recovery must begin immediately afterwards.
+        long videoTimeout = 24000L;
         diagnostic("[视频策略V4.11] " + videoStrategy.describe()
                 + " / timeout=" + videoTimeout + "ms");
 
@@ -4576,7 +4567,7 @@ public final class TaskExecutor {
 
         while (SystemClock.elapsedRealtime() - start < videoTimeout) {
 
-            if (!paceSleepV415(950L, 1450L)) return false;
+            if (!paceSleepV415(220L, 380L)) return false;
             loop++;
 
             String fg = getFg(suPath, false);
@@ -4603,7 +4594,21 @@ public final class TaskExecutor {
                 continue;
             }
 
-            // OCR-only on most polls; this removes the old dumpUi + OCR pair.
+            // Once the required 15s dwell has elapsed, start exit immediately.
+            // Do not wait for another ad OCR match; that was the source of long 40s+ stalls.
+            long elapsedBeforeOcr = SystemClock.elapsedRealtime() - start;
+            if (elapsedBeforeOcr >= 15200L && !doubleSwipeDone) {
+                attemptedReturn = true;
+                TaskProfileStoreV48.recordRecovery(taskName, "video_dwell_complete_fast_exit");
+                diagnostic("[视频快速退出V4.81] 已满足15秒，立即执行连续双右滑，不再等待广告OCR/总超时");
+                doubleSwipeDone = fastDoubleRightBackV420(
+                        suPath, taskName, "视频达到最低观看时间后的立即退出");
+                if (doubleSwipeDone) return true;
+                // If the double gesture did not land on the task panel, verify/recover now.
+                if (recoverToXianyuTaskPanelV47(suPath, "视频15秒后立即恢复任务面板")) return true;
+            }
+
+            // OCR is used only while waiting for the required dwell or for verification.
             ScreenOcr.Snapshot ocr = captureOcrV45(suPath, "视频快速轮询");
             String combined = combinedTextV45(null, ocr);
 
@@ -5667,7 +5672,7 @@ public final class TaskExecutor {
         }
 
         // 不做 screenshot / OCR / 650ms 等待；只给 Android 输入队列一个极短间隔。
-        SystemClock.sleep(90L);
+        SystemClock.sleep(45L);
 
         if (userAborted) return false;
 
@@ -5681,7 +5686,7 @@ public final class TaskExecutor {
         TaskProfileStoreV48.setReturnSwipes(taskName, 2);
 
         // 双滑完成后只做一次短确认；失败时交给原有恢复逻辑，不在这里连续 BACK。
-        SystemClock.sleep(280L);
+        SystemClock.sleep(140L);
         ScreenOcr.Snapshot ocr = captureOcrV45(suPath, "视频双返回后任务面板确认");
         if (isTaskPageV45(null, ocr)) {
             diagnostic("[视频快速双返回V4.20] ✅ 连续双滑后已确认任务面板");
@@ -7388,18 +7393,7 @@ public final class TaskExecutor {
                 return new RootResult(-4, "", "manual_takeover_hard_stop");
             }
         }
-
-        // V4.50.1: use learned single-gesture motor style only. The task/page logic
-        // still chooses WHAT to click and WHAT task to execute. Human learning
-        // influences landing variation, press duration, swipe distance, tremor and
-        // curve only; it never replays a learned task sequence.
-        if (command != null && running) {
-            RootResult humanized = tryHumanizedInputV450(suPath, command);
-            if (humanized != null && humanized.exitCode == 0) return humanized;
-            if (humanized != null) {
-                diagnostic("[学习真人V4.50] 真人轨迹注入失败，回退原始 input 命令");
-            }
-        }
+        // Humanized/learned gesture injection removed. Execute the requested input directly.
 
         if (command != null) {
             String c = command.trim().toLowerCase(Locale.US);
