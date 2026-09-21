@@ -38,6 +38,15 @@
         </receiver>
 
         <service
+            android:name=".HumanLearningForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="user-started isolated touch gesture style recorder for Xianyu" />
+        </service>
+
+        <service
             android:name=".TaskForegroundService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
