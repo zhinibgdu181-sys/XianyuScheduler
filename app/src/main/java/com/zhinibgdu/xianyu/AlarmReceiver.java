@@ -34,7 +34,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         if (!AppConfig.isPolishTaskEnabled(app)
                 && !AppConfig.isLocalTaskEnabled(app)
                 && !AppConfig.isVideoTaskEnabled(app)
-                && !AppConfig.isJumpTaskEnabled(app)) {
+                && !AppConfig.isGameTaskEnabled(app)) {
             TaskStatusReceiver.writeLog(app, "INFO", "调度", "任务开关均关闭，跳过执行");
             return;
         }
