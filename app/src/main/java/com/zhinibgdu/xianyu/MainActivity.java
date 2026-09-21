@@ -44,6 +44,9 @@ public class MainActivity extends Activity {
     private TextView scheduleStatusText;
     private TextView runtimeStatusText;
     private TextView statusDetailText;
+    private LinearLayout gestureLearningCard;
+    private TextView gestureLearningStatusText;
+    private TextView gestureLearningDetailText;
     private TextView todayDateText;
     private TextView todaySummaryText;
     private TextView todayCompletedText;
@@ -87,7 +90,8 @@ public class MainActivity extends Activity {
         public void run() {
             showStatus(false);
             refreshTodayCompleted();
-            if (TaskExecutor.isRunning()) {
+            refreshGestureLearningCard();
+            if (TaskExecutor.isRunning() || TaskExecutor.isStandaloneHumanLearningV450()) {
                 handler.postDelayed(this, 1500L);
             }
         }
@@ -103,6 +107,9 @@ public class MainActivity extends Activity {
         scheduleStatusText = findViewById(R.id.schedule_status_text);
         runtimeStatusText = findViewById(R.id.runtime_status_text);
         statusDetailText = findViewById(R.id.status_detail_text);
+        gestureLearningCard = findViewById(R.id.gesture_learning_card);
+        gestureLearningStatusText = findViewById(R.id.gesture_learning_status_text);
+        gestureLearningDetailText = findViewById(R.id.gesture_learning_detail_text);
         todayDateText = findViewById(R.id.today_date_text);
         todaySummaryText = findViewById(R.id.today_summary_text);
         todayCompletedText = findViewById(R.id.today_completed_text);
@@ -172,6 +179,7 @@ public class MainActivity extends Activity {
         copyAllLog.setOnClickListener(v -> copyAllLogToClipboard());
         todayRefresh.setOnClickListener(v -> refreshTodayCompleted());
         showPath.setOnClickListener(v -> showDataPaths());
+        gestureLearningCard.setOnClickListener(v -> toggleGestureLearning());
 
         navHome.setOnClickListener(v -> selectBottomTab(0));
         navToday.setOnClickListener(v -> selectBottomTab(1));
@@ -200,6 +208,7 @@ public class MainActivity extends Activity {
         refreshSummary();
         refreshTodayCompleted();
         refreshPermissionDashboard();
+        refreshGestureLearningCard();
         showStatus(false);
 
         if (Build.VERSION.SDK_INT >= 33
@@ -215,6 +224,7 @@ public class MainActivity extends Activity {
         refreshSummary();
         refreshTodayCompleted();
         refreshPermissionDashboard();
+        refreshGestureLearningCard();
         showStatus(false);
         selectBottomTab(selectedBottomTab);
     }
@@ -223,6 +233,61 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         handler.removeCallbacks(runningRefresh);
         super.onDestroy();
+    }
+
+    private void toggleGestureLearning() {
+        if (TaskExecutor.isRunning()) {
+            Toast.makeText(this, "自动任务运行中，不能同时采集手势", Toast.LENGTH_SHORT).show();
+            setStatusMessage("请先等待自动任务结束，再开启手势细节学习。");
+            return;
+        }
+
+        if (TaskExecutor.isStandaloneHumanLearningV450()) {
+            HumanLearningForegroundService.stop(this);
+            gestureLearningStatusText.setText("停止中");
+            gestureLearningDetailText.setText("正在停止手势细节采集…");
+            handler.postDelayed(this::refreshGestureLearningCard, 500L);
+            return;
+        }
+
+        try {
+            HumanLearningForegroundService.start(this);
+            gestureLearningStatusText.setText("启动中");
+            gestureLearningStatusText.setTextColor(0xFF1D4ED8);
+            gestureLearningStatusText.setBackgroundResource(R.drawable.bg_status_running);
+            gestureLearningDetailText.setText(
+                    "启动后切换到闲鱼进行正常点击/滑动。只学习单次手势细节，不记录任务流程。");
+            handler.postDelayed(() -> {
+                refreshGestureLearningCard();
+                if (TaskExecutor.isStandaloneHumanLearningV450()) {
+                    handler.removeCallbacks(runningRefresh);
+                    handler.post(runningRefresh);
+                }
+            }, 650L);
+        } catch (Throwable t) {
+            refreshGestureLearningCard();
+            setStatusMessage("手势细节学习启动失败：" + t.getClass().getSimpleName());
+        }
+    }
+
+    private void refreshGestureLearningCard() {
+        if (gestureLearningStatusText == null || gestureLearningDetailText == null) return;
+        boolean learning = TaskExecutor.isStandaloneHumanLearningV450();
+        if (learning) {
+            gestureLearningStatusText.setText("学习中");
+            gestureLearningStatusText.setTextColor(0xFF1D4ED8);
+            gestureLearningStatusText.setBackgroundResource(R.drawable.bg_status_running);
+            gestureLearningDetailText.setText(
+                    "仅记录闲鱼内单次点击/滑动细节；不记录页面顺序或任务完成流程。点击卡片可停止。\n"
+                            + TaskExecutor.getHumanLearningSummaryV450(this));
+        } else {
+            gestureLearningStatusText.setText("未开启");
+            gestureLearningStatusText.setTextColor(0xFF166534);
+            gestureLearningStatusText.setBackgroundResource(R.drawable.bg_status_idle);
+            gestureLearningDetailText.setText(
+                    "点击开启后到闲鱼中操作。只学习单次点击/滑动的时长、距离、轨迹和弧度，不学习任务完成流程。\n"
+                            + TaskExecutor.getHumanLearningSummaryV450(this));
+        }
     }
 
     private void selectBottomTab(int tab) {
@@ -780,6 +845,7 @@ public class MainActivity extends Activity {
     private void showStatus(boolean userRequested) {
         boolean running = TaskExecutor.isRunning();
         setRuntimeState(running);
+        refreshGestureLearningCard();
 
         java.io.File dir = getExternalFilesDir(null);
         java.io.File file = dir == null ? null : new java.io.File(dir, "xianyu_log.txt");
