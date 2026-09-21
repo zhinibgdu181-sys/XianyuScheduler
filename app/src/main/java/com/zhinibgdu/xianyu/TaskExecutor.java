@@ -604,6 +604,14 @@ public final class TaskExecutor {
             freshLaunchV421 = true;
         }
 
+        // V4.50: opening ads must be handled before every task path.
+        // Previously polish started first, so an ad was classified as UNKNOWN_XIANYU
+        // and the navigator tried Back instead of clicking "跳过广告".
+        diagnostic("[启动广告V4.50] 任务开始前先检查闲鱼启动广告");
+        if (!dismissOpeningAdV47(suPath)) {
+            diagnostic("[启动广告V4.50] 广告处理未确认完成，继续使用安全页面探测");
+        }
+
         // V4.48.2: “一键擦亮” is an independent task card. Run it
         // before the task-panel navigator only when its own switch/category is on.
         boolean runPolish = activeCategory == TaskCategory.POLISH
@@ -902,6 +910,16 @@ public final class TaskExecutor {
                 continue;
             }
 
+            if (page.kind == PageKindV411.UNKNOWN_XIANYU
+                    && looksLikeOpeningAdV450(page.ocr)) {
+                diagnostic("[一键擦亮V4.50] 导航过程中检测到启动广告，先跳过广告");
+                if (!dismissOpeningAdV47(suPath)
+                        || !sleepAbortableV48(320L)) {
+                    return ScreenOcr.Snapshot.empty();
+                }
+                continue;
+            }
+
             if (page.kind == PageKindV411.COIN_HOME
                     || page.kind == PageKindV411.TASK_PANEL
                     || page.kind == PageKindV411.UNKNOWN_XIANYU) {
@@ -920,6 +938,51 @@ public final class TaskExecutor {
         }
 
         return ScreenOcr.Snapshot.empty();
+    }
+
+    /**
+     * ML Kit can merge the three Mine-page entries into one OCR line:
+     * "我发布的 我的空间 我卖出的". Clicking the line center opens 我的空间.
+     * Compute the horizontal center of the "我发布的" substring instead.
+     */
+    private static boolean clickMinePublishedEntryV450(
+            String suPath,
+            ScreenOcr.Snapshot mine
+    ) {
+        if (mine == null || mine.isEmpty() || !isMinePageV45(null, mine)) return false;
+        final String token = "我发布的";
+
+        for (ScreenOcr.Item item : mine.items) {
+            if (item == null || item.text == null || item.text.trim().isEmpty()) continue;
+            String compact = item.text.replaceAll("\\s+", "");
+            int index = compact.indexOf(token);
+            if (index < 0) continue;
+
+            int width = Math.max(1, item.bounds.width());
+            float charCenter = index + token.length() / 2.0f;
+            float fraction = charCenter / Math.max(1.0f, compact.length());
+            int x = item.bounds.left + Math.round(width * fraction);
+            int y = item.centerY();
+
+            float nx = mine.width <= 0 ? 0f : (float) x / (float) mine.width;
+            float ny = mine.height <= 0 ? 0f : (float) y / (float) mine.height;
+
+            // On the confirmed Mine page, "我发布的" is the left entry in the
+            // transaction row. Reject a merged-line estimate that falls into the
+            // middle/right entries.
+            if (nx < 0.035f || nx > 0.255f || ny < 0.27f || ny > 0.49f) {
+                diagnostic("[一键擦亮V4.50] ‘我发布的’OCR子文本坐标超出左侧安全区，拒绝："
+                        + item.text + " -> " + x + "," + y);
+                continue;
+            }
+
+            if (!ensureFg(suPath)) return false;
+            diagnostic("[一键擦亮V4.50] 精确点击‘我发布的’子文本 → "
+                    + x + "," + y + " / OCR=" + item.text);
+            RootResult tap = rootWithPath(suPath, "input tap " + x + " " + y);
+            return tap.exitCode == 0;
+        }
+        return false;
     }
 
     /**
@@ -948,17 +1011,16 @@ public final class TaskExecutor {
             return;
         }
 
-        diagnostic("[一键擦亮V4.48.1] 已确认‘我的’页，进入‘我发布的’");
-        boolean opened = clickOcrTextAnyV45(
-                suPath, mine, false,
-                "我发布的", "我的发布"
-        );
+        diagnostic("[一键擦亮V4.50] 已确认‘我的’页，精确进入‘我发布的’");
+        boolean opened = clickMinePublishedEntryV450(suPath, mine);
         if (!opened) {
-            // 13750.jpg: “我发布的”中心约 x=0.11W, y=0.38H.
-            diagnostic("[一键擦亮V4.48.1] OCR未找到‘我发布的’，使用实机比例坐标兜底");
+            // Screenshot calibration: “我发布的” is the LEFT entry of
+            // “我发布的 / 我的空间 / 我卖出的”. This fallback is allowed only
+            // after the whole page has already been positively identified as MINE.
+            diagnostic("[一键擦亮V4.50] 未取得可靠的‘我发布的’子文本坐标，使用左侧安全区比例坐标兜底");
             opened = tapByRatioV43(
                     suPath, 0.11f, 0.38f,
-                    "本地任务-我的-我发布的", false
+                    "一键擦亮-我的-我发布的", false
             );
         }
         if (!opened) {
@@ -1060,6 +1122,15 @@ public final class TaskExecutor {
         if (text.contains("已下架")) score++;
         if (text.contains("一键擦亮")) score += 2;
         return score >= 2;
+    }
+
+    private static boolean looksLikeOpeningAdV450(ScreenOcr.Snapshot ocr) {
+        if (ocr == null || ocr.isEmpty()) return false;
+        String text = ocr.fullText == null ? "" : ocr.fullText;
+        return text.contains("跳转至详情页面或第三方应用")
+                || (text.contains("滑动或点击") && text.contains("第三方应用"))
+                || text.contains("跳过广告")
+                || text.matches("(?s).*跳过\\s*\\d{0,2}.*");
     }
 
     private static boolean dismissOpeningAdV47(String suPath) {
@@ -2773,6 +2844,18 @@ public final class TaskExecutor {
                 continue;
             }
 
+            String compactTitleV450 = text.replaceAll("\\s+", "");
+            if (compactTitleV450.matches(".*第[1-7]天.*")
+                    || compactTitleV450.contains("今天")
+                    || compactTitleV450.contains("明日再来")
+                    || compactTitleV450.contains("累积任务奖励")
+                    || compactTitleV450.contains("任务奖励")
+                    || compactTitleV450.contains("完成3次")
+                    || compactTitleV450.contains("完成6次")
+                    || compactTitleV450.contains("完成10次")) {
+                continue;
+            }
+
             if (text.matches("^[+\\-0-9.%/() 次币元]+$")) continue;
 
             int cx = item.centerX();
@@ -3092,10 +3175,33 @@ public final class TaskExecutor {
     ) {
         if (snapshot == null || snapshot.isEmpty()) return null;
         String targetKey = canonicalTaskKeyV411(taskName);
+
+        // Primary path: normal task-row parsing.
         for (TaskCandidate candidate : findTaskCandidatesOcrV45(snapshot)) {
             if (candidate == null || !candidate.isClaimReward) continue;
             String candidateKey = canonicalTaskKeyV411(candidate.name);
             if (sameTaskKeyV411(targetKey, candidateKey)) return candidate;
+        }
+
+        // V4.50 geometry fallback: OCR can associate the right-side CLAIM button
+        // with a nearby day label such as "<第2天 <今天". Require the actual
+        // completed task title to be visible to the left on the same row.
+        for (ScreenOcr.Item action : snapshot.items) {
+            if (!isValidTaskActionOcrV47(snapshot, action)) continue;
+            String actionText = action.text == null ? "" : action.text.replaceAll("\\s+", "");
+            if (!actionText.contains("领取奖励") && !actionText.contains("领取笑励")) continue;
+
+            for (ScreenOcr.Item item : snapshot.items) {
+                if (item == null || item == action || item.text == null) continue;
+                String itemKey = canonicalTaskKeyV411(normalizeTaskName(item.text));
+                if (!sameTaskKeyV411(targetKey, itemKey)) continue;
+                if (item.centerX() >= action.centerX() - 60) continue;
+                if (Math.abs(item.centerY() - action.centerY()) > 210) continue;
+
+                diagnostic("[领取奖励V4.50] 使用同一任务行几何绑定："
+                        + taskName + " -> " + action.boundsString());
+                return new TaskCandidate(taskName, action.boundsString(), true);
+            }
         }
         return null;
     }
@@ -3845,19 +3951,20 @@ public final class TaskExecutor {
                         return false;
                     }
 
-                    // 福利浏览接近结束时不要再发无意义滑动，避免已经完成的页面
-                    // 被继续拖动；先让倒计时自然归零，再立即进入返回流程。
-                    boolean browseNearCompletion = welfareBrowse
-                            && elapsed >= 15000L
-                            && browseCompletionMisses >= 0;
-                    if (TARGET_PACKAGE.equals(fg) && !browseNearCompletion) {
+                    // V4.50: welfare tasks explicitly require "滑动浏览".
+                    // Do not stop producing motion merely because 15 seconds elapsed.
+                    // The previous logic froze the page at "滑动浏览8s", so the
+                    // server-side counter never progressed. Keep swiping until the
+                    // fish overlay/countdown actually disappears or the 45s guard fires.
+                    if (TARGET_PACKAGE.equals(fg)) {
                         rootWithPath(
                                 suPath,
                                 "input swipe 720 2250 720 1050 420"
                         );
-                        diagnostic("[执行] 内部浏览滑动，elapsed=" + elapsed + "ms");
-                    } else if (welfareBrowse && browseNearCompletion) {
-                        diagnostic("[福利浏览V4.43.5] 已进入完成确认阶段，暂停继续滑动");
+                        diagnostic(welfareBrowse
+                                ? "[福利浏览V4.50] 倒计时未完成，继续有效滑动，elapsed="
+                                    + elapsed + "ms"
+                                : "[执行] 内部浏览滑动，elapsed=" + elapsed + "ms");
                     }
                     nextBrowseSwipe += 2500L;
                 }
@@ -3881,7 +3988,7 @@ public final class TaskExecutor {
 
                     if (containsBrowseCountdownV4433(browseText)) {
                         browseCompletionMisses = 0;
-                        diagnostic("[福利浏览V4.43.7] 任务倒计时仍存在，继续等待："
+                        diagnostic("[福利浏览V4.50] 任务倒计时仍存在，继续滑动："
                                 + extractBrowseCountdownV4433(browseText)
                                 + " / 小黄鱼=" + (browseProbe.welfareFishVisible ? "显示" : "未显示"));
                     } else {
