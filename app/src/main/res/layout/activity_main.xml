@@ -41,15 +41,18 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="本地任务 · 视频任务 · 跳转任务"
+                    android:text="一键擦亮 · 本地任务 · 视频任务 · 跳转任务"
                     android:textColor="#7A8190"
                     android:textSize="13sp" />
 
                 <LinearLayout
+                    android:id="@+id/human_learning_card"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="18dp"
                     android:background="@drawable/bg_card"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:elevation="2dp"
                     android:orientation="vertical"
                     android:padding="16dp">
@@ -64,7 +67,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="当前状态"
+                            android:text="学习真人"
                             android:textColor="#374151"
                             android:textSize="15sp"
                             android:textStyle="bold" />
@@ -78,7 +81,7 @@
                             android:paddingTop="5dp"
                             android:paddingEnd="11dp"
                             android:paddingBottom="5dp"
-                            android:text="空闲"
+                            android:text="点击开始"
                             android:textColor="#166534"
                             android:textSize="12sp"
                             android:textStyle="bold" />
@@ -90,7 +93,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="2dp"
-                        android:text="权限、任务状态和功能说明会在这里汇总。"
+                        android:text="点击卡片开始学习。仅在闲鱼前台记录真实手指的点击落点、按压时间、滑动完整轨迹、弧度、速度变化和停顿节奏；学习时不会自动点击。"
                         android:textColor="#6B7280"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -214,7 +217,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
                         android:lineSpacingExtra="5dp"
-                        android:text="• 自动执行：进入闲鱼币任务面板并按任务状态执行。\n• 记录：按日期查看已验证完成的任务与可确认的闲鱼币收益。\n• 自动化：三类任务独立运行和每日定时。\n• 日志：查看完整运行过程和故障信息。\n• 游戏：仅操作水果/麻将对象，不点击打乱、消除、解锁等功能按钮。"
+                        android:text="• 学习真人：只在闲鱼前台学习真实点击、按压时长、滑动轨迹、弧度、速度变化和停顿节奏。\n• 自动执行：执行时优先采用已学习的真人触摸节奏与滑动曲线；目标点击仍受安全区域约束。\n• 记录：按日期查看已验证完成的任务与可确认的闲鱼币收益。\n• 自动化：一键擦亮、本地、视频、跳转四类任务独立运行和每日定时。\n• 日志：查看完整运行过程和故障信息。"
                         android:textColor="#4B5563"
                         android:textSize="14sp" />
                 </LinearLayout>

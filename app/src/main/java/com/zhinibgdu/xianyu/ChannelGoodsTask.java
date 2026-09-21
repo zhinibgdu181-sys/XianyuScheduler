@@ -23,9 +23,32 @@ final class ChannelGoodsTask {
     static boolean productTitle(String text) {
         if (text == null) return false;
         String t = text.replaceAll("\\s+", "");
-        // Only the discounted product cards in this channel, never generic claim/buy buttons.
-        return t.matches("^[\\[【(（]?抵[0-9]{1,2}[%％][\\]】)）]?.{4,}$")
-                && !t.contains("立即购买") && !t.contains("立即领取");
+        if (t.length() < 5 || t.length() > 64) return false;
+
+        // Reject counters, navigation chrome, prices, reward/CTA text and other
+        // non-product rows. The older implementation accepted only titles that
+        // started with "抵30%", which caused the final "再点1个宝贝" to stall
+        // when the remaining visible products had ordinary titles.
+        String[] blocked = new String[]{
+                "再点", "宝贝获", "闲鱼币最大可抵", "立即购买", "立即领取", "去领取",
+                "聊一聊", "我想要", "推荐", "可用红包", "公告", "攻略", "搜索",
+                "现金奖池", "优先排队", "去升级", "人付款", "人浏览", "已售",
+                "收益+10%", "完成3次", "完成6次", "完成10次", "任务奖励"
+        };
+        for (String token : blocked) {
+            if (t.contains(token)) return false;
+        }
+
+        if (t.matches("^[¥￥xX+\\-0-9.%/()元币]+$")) return false;
+        if (t.matches("^[0-9]{1,4}(?:\\.[0-9]{1,2})?$")) return false;
+
+        // Discount-prefixed cards are still strong candidates, but ordinary
+        // descriptive titles are valid too.
+        if (t.matches("^[\\[【(（]?抵[0-9]{1,2}[%％][\\]】)）]?.{4,}$")) return true;
+
+        // Require some non-numeric language content so a pure metric line cannot
+        // become a product candidate.
+        return t.matches(".*[\\p{IsHan}A-Za-z].*");
     }
     static boolean run(Host host) {
         if (host.aborted()) return false;
@@ -48,8 +71,8 @@ final class ChannelGoodsTask {
             }
             if (current > previous) return false;
             stagnant = current < previous ? 0 : stagnant + 1;
-            if (stagnant >= 2) {
-                host.log("连续两件商品未增加进度，停止本轮，避免重复空转");
+            if (stagnant >= 3) {
+                host.log("连续三件商品未增加进度，停止本轮，避免重复空转");
                 return false;
             }
             previous = current;

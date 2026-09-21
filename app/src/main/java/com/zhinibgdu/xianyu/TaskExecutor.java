@@ -160,6 +160,11 @@ public final class TaskExecutor {
     private static volatile Process touchMonitorProcess;
     private static volatile Thread touchMonitorThread;
 
+    // V4.50: explicit passive human-learning mode. It records only gestures made
+    // while Xianyu is the foreground app and never emits input by itself.
+    private static volatile boolean standaloneHumanLearningV450 = false;
+    private static volatile long standaloneHumanLearningStartedAtV450 = 0L;
+
     // V4.11 manual-takeover hardening: shell-generated tap/swipe events are
     // ignored only inside a very short correlation window so the monitor does
     // not stop itself on devices that echo synthetic input to getevent.
@@ -229,6 +234,73 @@ public final class TaskExecutor {
         return activeCategory.label;
     }
 
+    public static boolean isStandaloneHumanLearningV450() {
+        Thread thread = touchMonitorThread;
+        return standaloneHumanLearningV450
+                && thread != null
+                && thread.isAlive();
+    }
+
+    public static String getHumanLearningSummaryV450(Context context) {
+        if (context == null) return "尚未学习真人操作";
+        return HumanGestureStyleStore.summary(context.getApplicationContext());
+    }
+
+    public static synchronized boolean startStandaloneHumanLearningV450(Context context) {
+        if (context == null || running) return false;
+
+        lastContext = context.getApplicationContext();
+        userAborted = false;
+        physicalTouchDetected = false;
+        physicalTouchAt = 0L;
+        syntheticInputIgnoreUntilV411 = 0L;
+        lastSyntheticInputAtV411 = 0L;
+
+        String suPath = cachedSuPath;
+        if (suPath == null || suPath.isEmpty()) suPath = findSuPathWithRetry();
+        if (suPath == null || suPath.isEmpty()) {
+            standaloneHumanLearningV450 = false;
+            diagnostic("[学习真人V4.50] ROOT 不可用，无法启动触摸学习");
+            return false;
+        }
+
+        cachedSuPath = suPath;
+        standaloneHumanLearningV450 = true;
+        standaloneHumanLearningStartedAtV450 = SystemClock.elapsedRealtime();
+        startPhysicalTouchMonitorV48(suPath);
+
+        if (touchMonitorThread == null || !touchMonitorThread.isAlive()) {
+            standaloneHumanLearningV450 = false;
+            diagnostic("[学习真人V4.50] 未能启动触摸监听");
+            return false;
+        }
+
+        diagnostic("[学习真人V4.50] 已开始被动学习；仅闲鱼前台有效。"
+                + "记录点击按压、完整滑动轨迹、弧度、速度变化和操作间停顿；不自动点击。");
+        TaskStatusReceiver.writeLog(
+                lastContext,
+                "INFO",
+                "学习真人",
+                "开始被动学习真人手势，仅记录闲鱼前台触摸"
+        );
+        return true;
+    }
+
+    public static synchronized void stopStandaloneHumanLearningV450() {
+        if (!standaloneHumanLearningV450) return;
+        standaloneHumanLearningV450 = false;
+        standaloneHumanLearningStartedAtV450 = 0L;
+        stopPhysicalTouchMonitorV48();
+        if (lastContext != null) {
+            TaskStatusReceiver.writeLog(
+                    lastContext,
+                    "INFO",
+                    "学习真人",
+                    "停止学习；" + HumanGestureStyleStore.summary(lastContext)
+            );
+        }
+    }
+
     public static void requestStop(String reason) {
         if (running) markUserAbortV48(reason == null || reason.isEmpty() ? "用户请求停止" : reason);
     }
@@ -265,6 +337,14 @@ public final class TaskExecutor {
             return;
         }
         lastContext = context.getApplicationContext();
+        // Automation and passive learning never run at the same time. Otherwise
+        // synthetic touches could pollute the human profile.
+        standaloneHumanLearningV450 = false;
+        try {
+            context.stopService(new Intent(context, HumanLearningForegroundService.class));
+        } catch (Throwable ignored) {
+        }
+        stopPhysicalTouchMonitorV48();
         // A prior 90s passive observer must never overlap a new automation run.
         // In particular, its final ScreenOcr.close() must not race the new solver.
         stopHumanTeachingCaptureV464();
@@ -522,6 +602,14 @@ public final class TaskExecutor {
                 return;
             }
             freshLaunchV421 = true;
+        }
+
+        // V4.50: opening ads must be handled before every task path.
+        // Previously polish started first, so an ad was classified as UNKNOWN_XIANYU
+        // and the navigator tried Back instead of clicking "跳过广告".
+        diagnostic("[启动广告V4.50] 任务开始前先检查闲鱼启动广告");
+        if (!dismissOpeningAdV47(suPath)) {
+            diagnostic("[启动广告V4.50] 广告处理未确认完成，继续使用安全页面探测");
         }
 
         // V4.48.2: “一键擦亮” is an independent task card. Run it
@@ -822,6 +910,16 @@ public final class TaskExecutor {
                 continue;
             }
 
+            if (page.kind == PageKindV411.UNKNOWN_XIANYU
+                    && looksLikeOpeningAdV450(page.ocr)) {
+                diagnostic("[一键擦亮V4.50] 导航过程中检测到启动广告，先跳过广告");
+                if (!dismissOpeningAdV47(suPath)
+                        || !sleepAbortableV48(320L)) {
+                    return ScreenOcr.Snapshot.empty();
+                }
+                continue;
+            }
+
             if (page.kind == PageKindV411.COIN_HOME
                     || page.kind == PageKindV411.TASK_PANEL
                     || page.kind == PageKindV411.UNKNOWN_XIANYU) {
@@ -840,6 +938,51 @@ public final class TaskExecutor {
         }
 
         return ScreenOcr.Snapshot.empty();
+    }
+
+    /**
+     * ML Kit can merge the three Mine-page entries into one OCR line:
+     * "我发布的 我的空间 我卖出的". Clicking the line center opens 我的空间.
+     * Compute the horizontal center of the "我发布的" substring instead.
+     */
+    private static boolean clickMinePublishedEntryV450(
+            String suPath,
+            ScreenOcr.Snapshot mine
+    ) {
+        if (mine == null || mine.isEmpty() || !isMinePageV45(null, mine)) return false;
+        final String token = "我发布的";
+
+        for (ScreenOcr.Item item : mine.items) {
+            if (item == null || item.text == null || item.text.trim().isEmpty()) continue;
+            String compact = item.text.replaceAll("\\s+", "");
+            int index = compact.indexOf(token);
+            if (index < 0) continue;
+
+            int width = Math.max(1, item.bounds.width());
+            float charCenter = index + token.length() / 2.0f;
+            float fraction = charCenter / Math.max(1.0f, compact.length());
+            int x = item.bounds.left + Math.round(width * fraction);
+            int y = item.centerY();
+
+            float nx = mine.width <= 0 ? 0f : (float) x / (float) mine.width;
+            float ny = mine.height <= 0 ? 0f : (float) y / (float) mine.height;
+
+            // On the confirmed Mine page, "我发布的" is the left entry in the
+            // transaction row. Reject a merged-line estimate that falls into the
+            // middle/right entries.
+            if (nx < 0.035f || nx > 0.255f || ny < 0.27f || ny > 0.49f) {
+                diagnostic("[一键擦亮V4.50] ‘我发布的’OCR子文本坐标超出左侧安全区，拒绝："
+                        + item.text + " -> " + x + "," + y);
+                continue;
+            }
+
+            if (!ensureFg(suPath)) return false;
+            diagnostic("[一键擦亮V4.50] 精确点击‘我发布的’子文本 → "
+                    + x + "," + y + " / OCR=" + item.text);
+            RootResult tap = rootWithPath(suPath, "input tap " + x + " " + y);
+            return tap.exitCode == 0;
+        }
+        return false;
     }
 
     /**
@@ -868,17 +1011,16 @@ public final class TaskExecutor {
             return;
         }
 
-        diagnostic("[一键擦亮V4.48.1] 已确认‘我的’页，进入‘我发布的’");
-        boolean opened = clickOcrTextAnyV45(
-                suPath, mine, false,
-                "我发布的", "我的发布"
-        );
+        diagnostic("[一键擦亮V4.50] 已确认‘我的’页，精确进入‘我发布的’");
+        boolean opened = clickMinePublishedEntryV450(suPath, mine);
         if (!opened) {
-            // 13750.jpg: “我发布的”中心约 x=0.11W, y=0.38H.
-            diagnostic("[一键擦亮V4.48.1] OCR未找到‘我发布的’，使用实机比例坐标兜底");
+            // Screenshot calibration: “我发布的” is the LEFT entry of
+            // “我发布的 / 我的空间 / 我卖出的”. This fallback is allowed only
+            // after the whole page has already been positively identified as MINE.
+            diagnostic("[一键擦亮V4.50] 未取得可靠的‘我发布的’子文本坐标，使用左侧安全区比例坐标兜底");
             opened = tapByRatioV43(
                     suPath, 0.11f, 0.38f,
-                    "本地任务-我的-我发布的", false
+                    "一键擦亮-我的-我发布的", false
             );
         }
         if (!opened) {
@@ -980,6 +1122,15 @@ public final class TaskExecutor {
         if (text.contains("已下架")) score++;
         if (text.contains("一键擦亮")) score += 2;
         return score >= 2;
+    }
+
+    private static boolean looksLikeOpeningAdV450(ScreenOcr.Snapshot ocr) {
+        if (ocr == null || ocr.isEmpty()) return false;
+        String text = ocr.fullText == null ? "" : ocr.fullText;
+        return text.contains("跳转至详情页面或第三方应用")
+                || (text.contains("滑动或点击") && text.contains("第三方应用"))
+                || text.contains("跳过广告")
+                || text.matches("(?s).*跳过\\s*\\d{0,2}.*");
     }
 
     private static boolean dismissOpeningAdV47(String suPath) {
@@ -2693,6 +2844,18 @@ public final class TaskExecutor {
                 continue;
             }
 
+            String compactTitleV450 = text.replaceAll("\\s+", "");
+            if (compactTitleV450.matches(".*第[1-7]天.*")
+                    || compactTitleV450.contains("今天")
+                    || compactTitleV450.contains("明日再来")
+                    || compactTitleV450.contains("累积任务奖励")
+                    || compactTitleV450.contains("任务奖励")
+                    || compactTitleV450.contains("完成3次")
+                    || compactTitleV450.contains("完成6次")
+                    || compactTitleV450.contains("完成10次")) {
+                continue;
+            }
+
             if (text.matches("^[+\\-0-9.%/() 次币元]+$")) continue;
 
             int cx = item.centerX();
@@ -3012,10 +3175,33 @@ public final class TaskExecutor {
     ) {
         if (snapshot == null || snapshot.isEmpty()) return null;
         String targetKey = canonicalTaskKeyV411(taskName);
+
+        // Primary path: normal task-row parsing.
         for (TaskCandidate candidate : findTaskCandidatesOcrV45(snapshot)) {
             if (candidate == null || !candidate.isClaimReward) continue;
             String candidateKey = canonicalTaskKeyV411(candidate.name);
             if (sameTaskKeyV411(targetKey, candidateKey)) return candidate;
+        }
+
+        // V4.50 geometry fallback: OCR can associate the right-side CLAIM button
+        // with a nearby day label such as "<第2天 <今天". Require the actual
+        // completed task title to be visible to the left on the same row.
+        for (ScreenOcr.Item action : snapshot.items) {
+            if (!isValidTaskActionOcrV47(snapshot, action)) continue;
+            String actionText = action.text == null ? "" : action.text.replaceAll("\\s+", "");
+            if (!actionText.contains("领取奖励") && !actionText.contains("领取笑励")) continue;
+
+            for (ScreenOcr.Item item : snapshot.items) {
+                if (item == null || item == action || item.text == null) continue;
+                String itemKey = canonicalTaskKeyV411(normalizeTaskName(item.text));
+                if (!sameTaskKeyV411(targetKey, itemKey)) continue;
+                if (item.centerX() >= action.centerX() - 60) continue;
+                if (Math.abs(item.centerY() - action.centerY()) > 210) continue;
+
+                diagnostic("[领取奖励V4.50] 使用同一任务行几何绑定："
+                        + taskName + " -> " + action.boundsString());
+                return new TaskCandidate(taskName, action.boundsString(), true);
+            }
         }
         return null;
     }
@@ -3765,19 +3951,20 @@ public final class TaskExecutor {
                         return false;
                     }
 
-                    // 福利浏览接近结束时不要再发无意义滑动，避免已经完成的页面
-                    // 被继续拖动；先让倒计时自然归零，再立即进入返回流程。
-                    boolean browseNearCompletion = welfareBrowse
-                            && elapsed >= 15000L
-                            && browseCompletionMisses >= 0;
-                    if (TARGET_PACKAGE.equals(fg) && !browseNearCompletion) {
+                    // V4.50: welfare tasks explicitly require "滑动浏览".
+                    // Do not stop producing motion merely because 15 seconds elapsed.
+                    // The previous logic froze the page at "滑动浏览8s", so the
+                    // server-side counter never progressed. Keep swiping until the
+                    // fish overlay/countdown actually disappears or the 45s guard fires.
+                    if (TARGET_PACKAGE.equals(fg)) {
                         rootWithPath(
                                 suPath,
                                 "input swipe 720 2250 720 1050 420"
                         );
-                        diagnostic("[执行] 内部浏览滑动，elapsed=" + elapsed + "ms");
-                    } else if (welfareBrowse && browseNearCompletion) {
-                        diagnostic("[福利浏览V4.43.5] 已进入完成确认阶段，暂停继续滑动");
+                        diagnostic(welfareBrowse
+                                ? "[福利浏览V4.50] 倒计时未完成，继续有效滑动，elapsed="
+                                    + elapsed + "ms"
+                                : "[执行] 内部浏览滑动，elapsed=" + elapsed + "ms");
                     }
                     nextBrowseSwipe += 2500L;
                 }
@@ -3801,7 +3988,7 @@ public final class TaskExecutor {
 
                     if (containsBrowseCountdownV4433(browseText)) {
                         browseCompletionMisses = 0;
-                        diagnostic("[福利浏览V4.43.7] 任务倒计时仍存在，继续等待："
+                        diagnostic("[福利浏览V4.50] 任务倒计时仍存在，继续滑动："
                                 + extractBrowseCountdownV4433(browseText)
                                 + " / 小黄鱼=" + (browseProbe.welfareFishVisible ? "显示" : "未显示"));
                     } else {
@@ -5542,9 +5729,9 @@ public final class TaskExecutor {
             userAborted = true;
             diagnostic("🛑 人工接管，立即停止：" + reason);
             TaskProfileStoreV48.recordFailure("__GLOBAL__", "manual_takeover:" + reason);
-            // Human-learning/replay collection is intentionally disabled.
-            // A physical touch is only a hard takeover signal: stop automation,
-            // do not start a teaching window and do not persist the user's gesture.
+            // A real touch is still an immediate hard stop for automation.
+            // The touch monitor may then passively learn the human continuation;
+            // the learning observer itself never generates input.
         }
     }
 
@@ -5828,7 +6015,7 @@ public final class TaskExecutor {
 
         String device = findTouchscreenDeviceV48(suPath);
         if (device == null || device.isEmpty()) {
-            diagnostic("[人工检测] 未识别到物理触摸设备，继续使用前台/状态检测");
+            diagnostic("[学习真人V4.50] 未识别到物理触摸设备");
             return;
         }
 
@@ -5840,26 +6027,25 @@ public final class TaskExecutor {
         final int touchMaxY = touchMax[1];
         physicalTouchMaxXV469 = touchMaxX;
         physicalTouchMaxYV469 = touchMaxY;
-        diagnostic("[人工检测V4.69] 触摸坐标范围：X=" + touchMaxX + " Y=" + touchMaxY
-                + "，屏幕=" + screenW + "x" + screenH);
         physicalTouchDevice = device;
-        diagnostic("[人工检测] 监听物理触摸设备：" + device);
 
-        // The tap that starts a task can still be completing while getevent is
-        // being attached. Arm the takeover detector after a short grace window
-        // so that the launch finger-up/down tail is not misclassified as a new
-        // manual takeover.
+        diagnostic("[学习真人V4.50] 触摸设备=" + device
+                + " raw=" + touchMaxX + "x" + touchMaxY
+                + " screen=" + screenW + "x" + screenH);
+
+        // Avoid learning the finger-up tail from tapping "开始学习/执行任务".
         final long monitorArmedAtV453 = SystemClock.elapsedRealtime() + 1200L;
 
         Thread thread = new Thread(() -> {
             Process process = null;
             int startX = -1, startY = -1, lastX = -1, lastY = -1;
-            float pathDistance = 0f;
             ArrayList<int[]> trajectory = new ArrayList<>();
             long downAt = 0L;
             long lastGestureEndAt = 0L;
             long pendingWaitMs = 0L;
             boolean gestureActive = false;
+            boolean gestureShouldLearn = false;
+
             try {
                 process = Runtime.getRuntime().exec(new String[]{
                         suPath,
@@ -5867,7 +6053,7 @@ public final class TaskExecutor {
                         "getevent -lt " + device + " 2>/dev/null"
                 });
                 touchMonitorProcess = process;
-                diagnostic("[人工检测V4.70] 已启动独立真人触摸监听：" + device);
+                diagnostic("[学习真人V4.50] getevent 已开始监听");
 
                 BufferedReader reader = new BufferedReader(
                         new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
@@ -5875,7 +6061,6 @@ public final class TaskExecutor {
 
                 String line;
                 while ((line = reader.readLine()) != null) {
-
                     String u = line.toUpperCase(Locale.US);
                     boolean touchDown =
                             (u.contains("BTN_TOUCH")
@@ -5889,156 +6074,200 @@ public final class TaskExecutor {
                                     || (u.contains("ABS_MT_TRACKING_ID")
                                     && (u.endsWith("FFFFFFFF") || u.endsWith("-1")));
 
+                    long now = SystemClock.elapsedRealtime();
+
                     Integer rawX = parseTouchCoordinateV467(u, "ABS_MT_POSITION_X");
                     Integer rawY = parseTouchCoordinateV467(u, "ABS_MT_POSITION_Y");
                     Integer x = normalizeTouchCoordinateV469(rawX, touchMaxX, screenW);
                     Integer y = normalizeTouchCoordinateV469(rawY, touchMaxY, screenH);
+
                     if (x != null) {
                         lastX = x;
-                        // BTN_TOUCH/TRACKING_ID may arrive before the first ABS position
-                        // events. Bind the gesture start to the first valid coordinates
-                        // instead of permanently keeping startX/startY at -1.
                         if (gestureActive && startX < 0) startX = x;
                     }
                     if (y != null) {
                         lastY = y;
                         if (gestureActive && startY < 0) startY = y;
                     }
-                    if (gestureActive && lastX >= 0 && lastY >= 0
+                    if (gestureActive && gestureShouldLearn
+                            && lastX >= 0 && lastY >= 0
                             && (x != null || y != null)) {
-                        appendGesturePointV472(trajectory, lastX, lastY);
+                        appendGesturePointTimedV450(
+                                trajectory,
+                                lastX,
+                                lastY,
+                                (int) Math.max(0L, now - downAt)
+                        );
                     }
 
-                    long now = SystemClock.elapsedRealtime();
-
                     if (touchDown) {
-                        // BTN_TOUCH and ABS_MT_TRACKING_ID can both announce the same
-                        // finger-down. Once a gesture is active, the second down is a
-                        // duplicate event, not a new gesture.
                         if (gestureActive) continue;
-                        if (now < monitorArmedAtV453) {
-                            diagnostic("[人工检测V4.53] 忽略任务启动后触摸尾事件，armIn="
-                                    + Math.max(0L, monitorArmedAtV453 - now) + "ms");
-                            continue;
-                        }
-                        if (lastGestureEndAt > 0L && now - lastGestureEndAt < 150L) {
-                            diagnostic("[人工检测V4.69] 忽略结束后的重复DOWN，delta="
-                                    + Math.max(0L, now - lastGestureEndAt) + "ms");
-                            continue;
-                        }
+                        if (now < monitorArmedAtV453) continue;
+                        if (lastGestureEndAt > 0L && now - lastGestureEndAt < 120L) continue;
+
                         if (now <= syntheticInputIgnoreUntilV411
-                                && now - lastSyntheticInputAtV411 <= 500L) {
-                            diagnostic("[人工检测V4.47.2] 忽略程序 input tap/swipe 的触摸尾事件，delta="
-                                    + Math.max(0L, now - lastSyntheticInputAtV411) + "ms");
+                                && now - lastSyntheticInputAtV411 <= 1500L) {
+                            diagnostic("[学习真人V4.50] 忽略程序合成触摸尾事件");
                             continue;
                         }
 
-                        physicalTouchDetected = true;
-                        physicalTouchAt = now;
-                        if (!userAborted) {
-                            markUserAbortV48("检测到真实手指触摸屏幕");
-                            diagnostic("[人工检测] 已停止自动化；不记录、不学习、不回放真人手势");
+                        boolean standalone = standaloneHumanLearningV450;
+                        if (standalone) {
+                            // Privacy guard: never collect touches from launcher, settings,
+                            // lock screen, password fields, or any app other than Xianyu.
+                            String fg = getFg(suPath, false);
+                            if (!TARGET_PACKAGE.equals(fg)) {
+                                gestureShouldLearn = false;
+                                diagnostic("[学习真人V4.50] 非闲鱼前台，不记录本次触摸：" + fg);
+                                continue;
+                            }
+                        } else {
+                            physicalTouchDetected = true;
+                            physicalTouchAt = now;
+                            if (!userAborted) {
+                                markUserAbortV48("检测到真实手指触摸屏幕");
+                            }
                         }
 
-                        // Takeover is terminal for this monitor session. Do not wait
-                        // for TOUCH_UP and do not feed the gesture into any experience
-                        // store. The service/finally path will dispose the reader.
-                        break;
+                        gestureActive = true;
+                        gestureShouldLearn = standaloneHumanLearningV450 || userAborted;
+                        downAt = now;
+                        pendingWaitMs = lastGestureEndAt > 0L
+                                ? Math.max(0L, now - lastGestureEndAt)
+                                : 0L;
+                        startX = x == null ? -1 : x;
+                        startY = y == null ? -1 : y;
+                        lastX = startX;
+                        lastY = startY;
+                        trajectory.clear();
+                        if (gestureShouldLearn && startX >= 0 && startY >= 0) {
+                            appendGesturePointTimedV450(trajectory, startX, startY, 0);
+                        }
+
+                        if (!standaloneHumanLearningV450 && userAborted) {
+                            startHumanOperationTeachingV467();
+                            startHumanTeachingCaptureV464();
+                            diagnostic("[学习真人V4.50] 自动化已硬停止，转入90秒真人操作学习");
+                        }
+                        continue;
                     }
 
                     if (gestureActive && touchUp) {
                         int endX = x == null ? lastX : x;
                         int endY = y == null ? lastY : y;
-                        if (startX >= 0 && startY >= 0 && endX >= 0 && endY >= 0
+                        int duration = (int) Math.max(1L, now - downAt);
+
+                        if (gestureShouldLearn
+                                && startX >= 0 && startY >= 0
+                                && endX >= 0 && endY >= 0
                                 && endX < screenW && endY < screenH
                                 && startX < screenW && startY < screenH) {
+
+                            appendGesturePointTimedV450(trajectory, endX, endY, duration);
                             if (pendingWaitMs > 0L) {
-                                try {
-                                    HumanOperationExperienceStore.recordWait(
-                                            lastContext,
-                                            TeachingOutcomeStore.currentTask(),
-                                            TeachingOutcomeStore.currentScene(),
-                                            pendingWaitMs);
-                                    diagnostic("[真人经验V4.69] 已记录 WAIT：" + pendingWaitMs + "ms");
-                                } catch (Throwable t) {
-                                    diagnostic("[真人经验V4.69] WAIT记录失败，但继续监听：" + t);
-                                }
+                                HumanGestureStyleStore.recordWait(lastContext, pendingWaitMs);
                             }
-                            int duration = (int) Math.max(0L, now - downAt);
-                            double directDistance = Math.hypot(endX - startX, endY - startY);
-                            double angle = Math.toDegrees(Math.atan2(endY - startY, endX - startX));
-                            try {
-                                if (directDistance < 30.0 && duration < 450) {
-                                    HumanOperationExperienceStore.recordRawTap(
-                                            lastContext,
-                                            TeachingOutcomeStore.currentTask(),
-                                            TeachingOutcomeStore.currentScene(),
-                                            endX, endY, screenW, screenH);
-                                    diagnostic("[真人经验V4.68] 已记录 TAP：" + endX + "," + endY
-                                            + " duration=" + duration + "ms");
-                                } else {
-                                    appendGesturePointV472(trajectory, endX, endY);
-                                    SwipeCurveMetricsV472 curve =
-                                            calculateSwipeCurveMetricsV472(
-                                                    startX, startY, endX, endY, trajectory);
-                                    float effectivePath = Math.max(
-                                            curve.pathDistance, (float) directDistance);
-                                    float speed = duration <= 0 ? 0f
-                                            : effectivePath * 1000f / duration;
-                                    HumanOperationExperienceStore.recordSwipe(
-                                            lastContext,
-                                            TeachingOutcomeStore.currentTask(),
-                                            TeachingOutcomeStore.currentScene(),
-                                            startX, startY, endX, endY,
-                                            duration, effectivePath, (float) angle, speed,
-                                            curve.curvatureRad, curve.maxDeviation,
-                                            curve.pathRatio, trajectory,
-                                            screenW, screenH);
-                                    diagnostic("[真人经验V4.72] 已记录 SWIPE："
-                                            + startX + "," + startY + "→" + endX + "," + endY
-                                            + " duration=" + duration + "ms path=" + effectivePath
-                                            + " angle=" + angle + " curveRad=" + curve.curvatureRad
-                                            + " maxDev=" + curve.maxDeviation
-                                            + " pathRatio=" + curve.pathRatio
-                                            + " points=" + trajectory.size());
-                                }
-                            } catch (Throwable t) {
-                                diagnostic("[真人经验V4.68] 手势记录失败，但继续监听：" + t);
+
+                            double directDistance =
+                                    Math.hypot(endX - startX, endY - startY);
+
+                            if (directDistance < 30.0 && duration < 650) {
+                                HumanGestureStyleStore.recordTap(
+                                        lastContext,
+                                        duration,
+                                        screenW,
+                                        screenH,
+                                        trajectory
+                                );
+                                diagnostic("[学习真人V4.50] TAP "
+                                        + endX + "," + endY
+                                        + " hold=" + duration + "ms"
+                                        + " points=" + trajectory.size());
+                            } else {
+                                SwipeCurveMetricsV472 curve =
+                                        calculateSwipeCurveMetricsV472(
+                                                startX, startY, endX, endY, trajectory);
+                                HumanGestureStyleStore.recordSwipe(
+                                        lastContext,
+                                        duration,
+                                        screenW,
+                                        screenH,
+                                        trajectory
+                                );
+                                diagnostic("[学习真人V4.50] SWIPE "
+                                        + startX + "," + startY
+                                        + "→" + endX + "," + endY
+                                        + " duration=" + duration + "ms"
+                                        + " curveRad=" + curve.curvatureRad
+                                        + " maxDev=" + curve.maxDeviation
+                                        + " pathRatio=" + curve.pathRatio
+                                        + " points=" + trajectory.size());
                             }
+
                             lastGestureEndAt = now;
-                        } else {
-                            diagnostic("[人工检测V4.70] 收到抬起事件，但坐标未形成有效屏幕范围，丢弃本次手势");
                         }
+
                         gestureActive = false;
+                        gestureShouldLearn = false;
                         pendingWaitMs = 0L;
                         startX = startY = lastX = lastY = -1;
-                        pathDistance = 0f;
                         trajectory.clear();
                     }
 
-                    // Before takeover the old behavior remains immediate. After takeover
-                    // we intentionally keep this reader alive for the teaching window so
-                    // subsequent human gestures can be recorded.
+                    if (standaloneHumanLearningV450) {
+                        continue;
+                    }
                     if (!userAborted && !running) break;
                     if (userAborted && !isHumanTeachingActiveV466()) {
-                        diagnostic("[人工检测V4.70] 真人教学已结束，退出触摸监听");
+                        diagnostic("[学习真人V4.50] 真人学习窗口已结束，退出触摸监听");
                         break;
                     }
                 }
             } catch (Throwable t) {
-                if (running || userAborted) {
-                    diagnostic("[人工检测V4.67] 触摸经验监听退出：" + t);
+                if (running || userAborted || standaloneHumanLearningV450) {
+                    diagnostic("[学习真人V4.50] 触摸监听退出：" + t);
                 }
             } finally {
                 if (process != null) {
                     try { process.destroy(); } catch (Throwable ignored) { }
                 }
+                if (standaloneHumanLearningV450
+                        && touchMonitorThread == Thread.currentThread()) {
+                    standaloneHumanLearningV450 = false;
+                }
             }
-        }, "XianyuTouchGuard-V411");
+        }, "XianyuHumanGestureLearning-V450");
 
         thread.setDaemon(true);
         touchMonitorThread = thread;
         thread.start();
+    }
+
+    private static void appendGesturePointTimedV450(
+            List<int[]> points,
+            int x,
+            int y,
+            int elapsedMs
+    ) {
+        if (points == null || x < 0 || y < 0) return;
+        if (!points.isEmpty()) {
+            int[] last = points.get(points.size() - 1);
+            if (last != null && last.length >= 3
+                    && last[0] == x && last[1] == y
+                    && Math.abs(last[2] - elapsedMs) < 8) {
+                return;
+            }
+        }
+        final int maxPoints = 64;
+        int[] value = new int[]{x, y, Math.max(0, elapsedMs)};
+        if (points.size() < maxPoints) {
+            points.add(value);
+        } else {
+            // Keep the first and last samples; refresh interior points so long,
+            // curved swipes retain their shape instead of collapsing to endpoints.
+            int index = 1 + (Math.abs(elapsedMs / 7) % (maxPoints - 2));
+            points.set(index, value);
+        }
     }
 
     private static void appendGesturePointV472(List<int[]> points, int x, int y) {
@@ -6885,6 +7114,335 @@ public final class TaskExecutor {
     }
 
 
+    private static RootResult tryHumanizedInputV450(
+            String suPath,
+            String command
+    ) {
+        if (!running || standaloneHumanLearningV450
+                || lastContext == null || command == null) {
+            return null;
+        }
+
+        String trimmed = command.trim();
+        Matcher tap = Pattern.compile(
+                "^input\\s+tap\\s+(\\d+)\\s+(\\d+)\\s*$",
+                Pattern.CASE_INSENSITIVE
+        ).matcher(trimmed);
+        if (tap.matches()) {
+            HumanGestureStyleStore.GestureTemplate style =
+                    HumanGestureStyleStore.sampleTap(lastContext);
+            if (style == null) return null;
+            int x = Integer.parseInt(tap.group(1));
+            int y = Integer.parseInt(tap.group(2));
+            return replayHumanTapV450(suPath, x, y, style);
+        }
+
+        Matcher swipe = Pattern.compile(
+                "^input\\s+swipe\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)(?:\\s+(\\d+))?\\s*$",
+                Pattern.CASE_INSENSITIVE
+        ).matcher(trimmed);
+        if (swipe.matches()) {
+            int x1 = Integer.parseInt(swipe.group(1));
+            int y1 = Integer.parseInt(swipe.group(2));
+            int x2 = Integer.parseInt(swipe.group(3));
+            int y2 = Integer.parseInt(swipe.group(4));
+            int fallbackDuration = swipe.group(5) == null
+                    ? 500 : Integer.parseInt(swipe.group(5));
+            HumanGestureStyleStore.GestureTemplate style =
+                    HumanGestureStyleStore.sampleSwipe(
+                            lastContext, x2 - x1, y2 - y1);
+            if (style == null) return null;
+            return replayHumanSwipeV450(
+                    suPath, x1, y1, x2, y2, fallbackDuration, style);
+        }
+
+        return null;
+    }
+
+    private static RootResult replayHumanTapV450(
+            String suPath,
+            int targetX,
+            int targetY,
+            HumanGestureStyleStore.GestureTemplate style
+    ) {
+        int[] screen = getScreenSizeV43(suPath);
+        if (screen == null || screen.length < 2 || screen[0] <= 0 || screen[1] <= 0) {
+            return null;
+        }
+
+        TouchInjectionTargetV450 target =
+                resolveTouchInjectionTargetV450(suPath, screen[0], screen[1]);
+        if (target == null) return null;
+
+        ArrayList<int[]> mapped = new ArrayList<>();
+        List<int[]> source = style.points;
+        int sx = source.isEmpty() ? 0 : source.get(0)[0];
+        int sy = source.isEmpty() ? 0 : source.get(0)[1];
+        int duration = Math.max(35, Math.min(260, style.durationMs));
+
+        if (source.isEmpty()) {
+            mapped.add(new int[]{targetX, targetY, 0});
+            mapped.add(new int[]{targetX, targetY, duration});
+        } else {
+            for (int i = 0; i < source.size(); i++) {
+                int[] p = source.get(i);
+                if (p == null || p.length < 3) continue;
+                double scaleX = (double) screen[0] / Math.max(1, style.width);
+                double scaleY = (double) screen[1] / Math.max(1, style.height);
+                int dx = (int) Math.round((p[0] - sx) * scaleX);
+                int dy = (int) Math.round((p[1] - sy) * scaleY);
+                // Tap micro-motion is learned, but bounded tightly so a learned
+                // finger drift cannot move the click out of a small target.
+                dx = Math.max(-8, Math.min(8, dx));
+                dy = Math.max(-8, Math.min(8, dy));
+                int t = (int) Math.round(
+                        (double) Math.max(0, p[2])
+                                * duration / Math.max(1, style.durationMs));
+                mapped.add(new int[]{
+                        clampV450(targetX + dx, 1, screen[0] - 2),
+                        clampV450(targetY + dy, 1, screen[1] - 2),
+                        Math.max(0, Math.min(duration, t))
+                });
+            }
+            if (mapped.isEmpty()) {
+                mapped.add(new int[]{targetX, targetY, 0});
+                mapped.add(new int[]{targetX, targetY, duration});
+            }
+        }
+
+        RootResult result = injectTouchPathV450(
+                suPath, target, mapped, duration, "TAP");
+        if (result != null && result.exitCode == 0) {
+            diagnostic("[学习真人V4.50] 使用已学习点击：hold="
+                    + duration + "ms points=" + mapped.size());
+        }
+        return result;
+    }
+
+    private static RootResult replayHumanSwipeV450(
+            String suPath,
+            int x1,
+            int y1,
+            int x2,
+            int y2,
+            int fallbackDuration,
+            HumanGestureStyleStore.GestureTemplate style
+    ) {
+        int[] screen = getScreenSizeV43(suPath);
+        if (screen == null || screen.length < 2 || screen[0] <= 0 || screen[1] <= 0) {
+            return null;
+        }
+
+        TouchInjectionTargetV450 target =
+                resolveTouchInjectionTargetV450(suPath, screen[0], screen[1]);
+        if (target == null || style.points.size() < 2) return null;
+
+        int sx = style.startX();
+        int sy = style.startY();
+        int ex = style.endX();
+        int ey = style.endY();
+        double sdx = ex - sx;
+        double sdy = ey - sy;
+        double sourceLen = Math.hypot(sdx, sdy);
+        double tdx = x2 - x1;
+        double tdy = y2 - y1;
+        double targetLen = Math.hypot(tdx, tdy);
+        if (sourceLen < 10.0 || targetLen < 10.0) return null;
+
+        double distanceRatio = targetLen / sourceLen;
+        double scaledHumanDuration = style.durationMs
+                * Math.max(0.72, Math.min(1.45, Math.sqrt(distanceRatio)));
+        int baseDuration = Math.max(120, fallbackDuration);
+        int duration = (int) Math.round(
+                Math.max(baseDuration * 0.72,
+                        Math.min(baseDuration * 1.38,
+                                (scaledHumanDuration * 2.0 + baseDuration) / 3.0)));
+        duration = Math.max(140, Math.min(1800, duration));
+
+        ArrayList<int[]> mapped = new ArrayList<>();
+        double sourceLen2 = sourceLen * sourceLen;
+        double normalX = -tdy / targetLen;
+        double normalY = tdx / targetLen;
+        int maxPoints = Math.min(28, style.points.size());
+
+        for (int i = 0; i < maxPoints; i++) {
+            int sourceIndex = maxPoints <= 1
+                    ? 0
+                    : (int) Math.round(
+                            i * (style.points.size() - 1.0) / (maxPoints - 1.0));
+            int[] p = style.points.get(sourceIndex);
+            if (p == null || p.length < 3) continue;
+
+            double rx = p[0] - sx;
+            double ry = p[1] - sy;
+            double u = (rx * sdx + ry * sdy) / sourceLen2;
+            double cross = sdx * ry - sdy * rx;
+            double signedDeviation = cross / sourceLen;
+
+            // Preserve the learned curved path, scaled to the requested swipe length.
+            double mappedX = x1 + u * tdx
+                    + normalX * signedDeviation * distanceRatio;
+            double mappedY = y1 + u * tdy
+                    + normalY * signedDeviation * distanceRatio;
+            int t = (int) Math.round(
+                    (double) Math.max(0, p[2])
+                            * duration / Math.max(1, style.durationMs));
+
+            mapped.add(new int[]{
+                    clampV450((int) Math.round(mappedX), 1, screen[0] - 2),
+                    clampV450((int) Math.round(mappedY), 1, screen[1] - 2),
+                    Math.max(0, Math.min(duration, t))
+            });
+        }
+
+        if (mapped.size() < 2) return null;
+        mapped.get(0)[0] = clampV450(x1, 1, screen[0] - 2);
+        mapped.get(0)[1] = clampV450(y1, 1, screen[1] - 2);
+        mapped.get(0)[2] = 0;
+        int[] last = mapped.get(mapped.size() - 1);
+        last[0] = clampV450(x2, 1, screen[0] - 2);
+        last[1] = clampV450(y2, 1, screen[1] - 2);
+        last[2] = duration;
+
+        RootResult result = injectTouchPathV450(
+                suPath, target, mapped, duration, "SWIPE");
+        if (result != null && result.exitCode == 0) {
+            SwipeCurveMetricsV472 curve =
+                    calculateSwipeCurveMetricsV472(x1, y1, x2, y2, mapped);
+            diagnostic("[学习真人V4.50] 使用已学习曲线滑动：duration="
+                    + duration + "ms curveRad=" + curve.curvatureRad
+                    + " maxDev=" + curve.maxDeviation
+                    + " points=" + mapped.size());
+        }
+        return result;
+    }
+
+    private static final class TouchInjectionTargetV450 {
+        final String device;
+        final int rawMaxX;
+        final int rawMaxY;
+        final int screenW;
+        final int screenH;
+
+        TouchInjectionTargetV450(
+                String device, int rawMaxX, int rawMaxY, int screenW, int screenH) {
+            this.device = device;
+            this.rawMaxX = rawMaxX;
+            this.rawMaxY = rawMaxY;
+            this.screenW = screenW;
+            this.screenH = screenH;
+        }
+    }
+
+    private static TouchInjectionTargetV450 resolveTouchInjectionTargetV450(
+            String suPath,
+            int screenW,
+            int screenH
+    ) {
+        String device = physicalTouchDevice;
+        if (device == null || device.isEmpty()) {
+            device = findTouchscreenDeviceV48(suPath);
+        }
+        if (device == null || device.isEmpty()) return null;
+
+        int maxX = physicalTouchMaxXV469;
+        int maxY = physicalTouchMaxYV469;
+        if (maxX <= 0 || maxY <= 0) {
+            int[] ranges = getTouchscreenAxisMaxV469(suPath, device);
+            maxX = ranges[0];
+            maxY = ranges[1];
+        }
+        if (maxX <= 0 || maxY <= 0) return null;
+
+        physicalTouchDevice = device;
+        physicalTouchMaxXV469 = maxX;
+        physicalTouchMaxYV469 = maxY;
+        return new TouchInjectionTargetV450(
+                device, maxX, maxY, screenW, screenH);
+    }
+
+    private static RootResult injectTouchPathV450(
+            String suPath,
+            TouchInjectionTargetV450 target,
+            List<int[]> points,
+            int durationMs,
+            String kind
+    ) {
+        if (target == null || points == null || points.isEmpty()) return null;
+        if (userAborted || physicalTouchDetected) {
+            return new RootResult(-4, "", "manual_takeover_hard_stop");
+        }
+
+        int trackingId = 1000 + (int) (SystemClock.elapsedRealtime() % 20000L);
+        String dev = target.device;
+        StringBuilder cmd = new StringBuilder(4096);
+
+        int[] first = points.get(0);
+        int rawX = pixelToRawV450(first[0], target.screenW, target.rawMaxX);
+        int rawY = pixelToRawV450(first[1], target.screenH, target.rawMaxY);
+
+        // Linux multitouch protocol-B sequence. This keeps one finger down for the
+        // whole learned path, unlike chaining several "input swipe" commands.
+        cmd.append("sendevent ").append(dev).append(" 3 47 0;");
+        cmd.append("sendevent ").append(dev).append(" 3 57 ").append(trackingId).append(';');
+        cmd.append("sendevent ").append(dev).append(" 1 330 1;");
+        cmd.append("sendevent ").append(dev).append(" 3 53 ").append(rawX).append(';');
+        cmd.append("sendevent ").append(dev).append(" 3 54 ").append(rawY).append(';');
+        cmd.append("sendevent ").append(dev).append(" 0 0 0;");
+
+        int previousT = Math.max(0, first.length >= 3 ? first[2] : 0);
+        for (int i = 1; i < points.size(); i++) {
+            int[] p = points.get(i);
+            if (p == null || p.length < 3) continue;
+            int t = Math.max(previousT, Math.min(durationMs, p[2]));
+            int delta = t - previousT;
+            if (delta >= 5) {
+                cmd.append(String.format(
+                        Locale.US, "sleep %.3f;", delta / 1000.0));
+            }
+            rawX = pixelToRawV450(p[0], target.screenW, target.rawMaxX);
+            rawY = pixelToRawV450(p[1], target.screenH, target.rawMaxY);
+            cmd.append("sendevent ").append(dev).append(" 3 53 ").append(rawX).append(';');
+            cmd.append("sendevent ").append(dev).append(" 3 54 ").append(rawY).append(';');
+            cmd.append("sendevent ").append(dev).append(" 0 0 0;");
+            previousT = t;
+        }
+
+        if (durationMs - previousT >= 5) {
+            cmd.append(String.format(
+                    Locale.US, "sleep %.3f;", (durationMs - previousT) / 1000.0));
+        }
+        cmd.append("sendevent ").append(dev).append(" 3 57 -1;");
+        cmd.append("sendevent ").append(dev).append(" 1 330 0;");
+        cmd.append("sendevent ").append(dev).append(" 0 0 0;");
+
+        long now = SystemClock.elapsedRealtime();
+        lastSyntheticInputAtV411 = now;
+        syntheticInputIgnoreUntilV411 =
+                now + Math.max(1000L, durationMs + 850L);
+        invalidateOcrCacheV411();
+
+        diagnostic("[学习真人V4.50] 注入真人轨迹 " + kind
+                + " points=" + points.size() + " duration=" + durationMs + "ms");
+        return rootRaw(suPath, cmd.toString());
+    }
+
+    private static int pixelToRawV450(int pixel, int screenSize, int rawMax) {
+        if (screenSize <= 1 || rawMax <= 0) return Math.max(0, pixel);
+        return (int) Math.max(
+                0L,
+                Math.min(
+                        (long) rawMax,
+                        Math.round((double) pixel * rawMax / (screenSize - 1.0))
+                )
+        );
+    }
+
+    private static int clampV450(int value, int min, int max) {
+        if (max < min) return min;
+        return Math.max(min, Math.min(max, value));
+    }
+
     private static boolean isUiMutationCommandV412(String command) {
         if (command == null) return false;
         String c = command.trim().toLowerCase(Locale.US);
@@ -6912,6 +7470,17 @@ public final class TaskExecutor {
             if (userAborted || physicalTouchDetected) {
                 diagnostic("[硬停止V4.13] 人工接管后拦截 UI 操作：" + command);
                 return new RootResult(-4, "", "manual_takeover_hard_stop");
+            }
+        }
+
+        // Once enough real gestures have been learned, replace simple shell tap/
+        // swipe commands with a continuous learned touch path. If no compatible
+        // sample/device is available, keep the existing deterministic command.
+        if (command != null && running) {
+            RootResult humanized = tryHumanizedInputV450(suPath, command);
+            if (humanized != null && humanized.exitCode == 0) return humanized;
+            if (humanized != null) {
+                diagnostic("[学习真人V4.50] 真人轨迹注入失败，回退原始 input 命令");
             }
         }
 
