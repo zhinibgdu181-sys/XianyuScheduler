@@ -1112,14 +1112,21 @@ public final class TaskExecutor {
 
     private static boolean isMyListingsPageV448(ScreenOcr.Snapshot snapshot) {
         if (snapshot == null || snapshot.isEmpty()) return false;
-        String text = snapshot.fullText == null ? "" : snapshot.fullText;
-        if (!text.contains("我的发布")) return false;
+        String text = snapshot.fullText == null ? "" : snapshot.fullText.replaceAll("\\s+", "");
+        // Current Xianyu UI uses “我发布的”. Keep the old OCR variant “我的发布”
+        // as a compatibility alias.
+        if (!text.contains("我发布的") && !text.contains("我的发布")) return false;
 
         int score = 0;
         if (text.contains("今日数据")) score++;
+        if (text.contains("宝贝曝光")) score++;
         if (text.contains("在卖")) score++;
         if (text.contains("草稿")) score++;
         if (text.contains("已下架")) score++;
+        if (text.contains("加曝光")) score++;
+        if (text.contains("编辑")) score++;
+        if (text.contains("超强擦亮")) score++;
+        if (text.contains("有计划投放中")) score += 2;
         if (text.contains("一键擦亮")) score += 2;
         return score >= 2;
     }
@@ -2708,6 +2715,7 @@ public final class TaskExecutor {
         if (containsAny(name, "指定频道")) return 10;
         if (containsAny(name, "视频")) return 4;
         if (containsAny(name, "浏览")) return 3;
+        if (containsAny(name, "逛逛商城领超值优惠券", "商城", "好物")) return 2;
         return 1;
     }
 
@@ -3701,7 +3709,8 @@ public final class TaskExecutor {
     private static boolean isDeterministicInternalBrowseTaskV4432(String taskName) {
         if (taskName == null) return false;
         String n = taskName.replaceAll("\\s+", "");
-        return n.contains("去浏览福利好物");
+        return n.contains("去浏览福利好物")
+                || n.contains("逛逛商城领超值优惠券");
     }
 
     private static ScreenOcr.Snapshot freshTaskPanelOcrV415() {
@@ -3959,7 +3968,7 @@ public final class TaskExecutor {
                     explicitRequired + 650L,
                     Math.min(45000L, explicitRequired + 1700L));
         } else {
-            waitMs = fixedDuration(strategy.waitMs, minSafeWait, 15000L);
+            waitMs = fixedDuration(strategy.waitMs, minSafeWait, isInternalBrowse ? 30000L : 15000L);
         }
         diagnostic("[策略V4.15] " + strategy.describe()
                 + " / adaptive=" + waitMs + "ms"
@@ -3994,7 +4003,7 @@ public final class TaskExecutor {
 
                 if (elapsed >= nextFgCheck) {
                     String fg = getFg(suPath, false);
-                    nextFgCheck = elapsed + 700L;
+                    nextFgCheck = elapsed + (isInternalBrowse ? 1500L : 700L);
 
                     if (MODULE_PACKAGE.equals(fg)) {
                         markUserAbortV48("检测到用户切回闲鱼定时助手");
@@ -4134,13 +4143,15 @@ public final class TaskExecutor {
                 return true;
             }
 
-            String xml = dumpUi(suPath);
-            if (xml != null && containsAny(
-                    xml,
-                    "已完成", "任务完成", "完成任务", "已领取",
-                    "得骰子赚闲鱼币"
-            )) {
-                return true;
+            if (!isInternalBrowse) {
+                String xml = dumpUi(suPath);
+                if (xml != null && containsAny(
+                        xml,
+                        "已完成", "任务完成", "完成任务", "已领取",
+                        "得骰子赚闲鱼币"
+                )) {
+                    return true;
+                }
             }
 
             // Returning to Xianyu only means this execution stage finished.
@@ -4767,7 +4778,6 @@ public final class TaskExecutor {
                 "美团",
                 "快手",
                 "一淘",
-                "逛逛",
                 "闪购",
                 "领积分",
                 "刷视频",
@@ -5777,6 +5787,8 @@ public final class TaskExecutor {
         long explicit = explicitSecondsRequirementV415(taskName);
         if (explicit > 0L) return Math.min(45000L, explicit + 900L);
         if (isSearch) return 5200L;
+        if (taskName != null
+                && taskName.replaceAll("\\s+", "").contains("逛逛商城领超值优惠券")) return 21000L;
         // “去浏览福利好物”需要完整浏览约 15 秒；旧版 8200ms 只够滑动两次。
         if (isInternalBrowse && taskName != null
                 && taskName.replaceAll("\s+", "").contains("去浏览福利好物")) return 15000L;
@@ -5798,6 +5810,8 @@ public final class TaskExecutor {
     ) {
         long explicit = explicitSecondsRequirementV415(taskName);
         if (explicit > 0L) return Math.min(45000L, explicit + 500L);
+        if (taskName != null
+                && taskName.replaceAll("\\s+", "").contains("逛逛商城领超值优惠券")) return 20500L;
         if (isInternalBrowse && taskName != null
                 && taskName.replaceAll("\s+", "").contains("去浏览福利好物")) return 15000L;
         if (isInternalBrowse) return 6200L;
