@@ -98,6 +98,59 @@
                         android:textSize="13sp" />
                 </LinearLayout>
 
+                <LinearLayout
+                    android:id="@+id/gesture_learning_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bg_card"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:elevation="2dp"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="手势细节学习"
+                            android:textColor="#374151"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/gesture_learning_status_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_status_idle"
+                            android:paddingStart="11dp"
+                            android:paddingTop="5dp"
+                            android:paddingEnd="11dp"
+                            android:paddingBottom="5dp"
+                            android:text="未开启"
+                            android:textColor="#166534"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/gesture_learning_detail_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:lineSpacingExtra="2dp"
+                        android:text="点击开启后到闲鱼中操作。只学习单次点击/滑动的时长、距离、轨迹和弧度，不学习任务完成流程。"
+                        android:textColor="#6B7280"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -217,7 +270,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
                         android:lineSpacingExtra="5dp"
-                        android:text="• 学习真人：只学习单次手势风格，不学习完整任务流程；记录点击微小偏移、按压时长、滑动抖动、弧度、距离和速度。\n• 自动执行：任务逻辑仍由程序自己判断；点击位置会在目标安全范围附近小幅变化，滑动会复用已学习的距离/曲线/速度，不固定在同一像素。\n• 记录：按日期查看已验证完成的任务与可确认的闲鱼币收益。\n• 自动化：一键擦亮、本地、视频、跳转四类任务独立运行和每日定时。\n• 日志：查看完整运行过程和故障信息。"
+                        android:text="• 手势细节学习：只记录单次点击/滑动的时长、距离、轨迹与弧度，不学习任务流程。\n• 自动执行：任务逻辑仍由程序自己判断，学习数据只影响单次输入动作的执行方式。\n• 记录：按日期查看已验证完成的任务与可确认的闲鱼币收益。\n• 自动化：闲鱼本地、视频、小游戏三类任务独立运行；一键擦亮作为独立工具保留。\n• 日志：查看完整运行过程和故障信息。"
                         android:textColor="#4B5563"
                         android:textSize="14sp" />
                 </LinearLayout>
