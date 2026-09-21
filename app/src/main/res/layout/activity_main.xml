@@ -329,306 +329,210 @@
             </LinearLayout>
         </ScrollView>
 
-        <!-- 自动化：定时 + 四个独立任务卡片 -->
-        <ScrollView
+        <!-- 自动化：固定单屏紧凑布局，不滚动 -->
+        <LinearLayout
             android:id="@+id/page_automation"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:fillViewport="true"
-            android:clipToPadding="false"
-            android:scrollbars="vertical"
+            android:orientation="vertical"
+            android:paddingStart="18dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="8dp"
             android:visibility="gone">
 
-            <LinearLayout
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="自动化"
+                android:textColor="#111827"
+                android:textSize="25sp"
+                android:textStyle="bold" />
+
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingStart="18dp"
-                android:paddingTop="24dp"
-                android:paddingEnd="18dp"
-                android:paddingBottom="24dp">
+                android:layout_marginTop="2dp"
+                android:maxLines="1"
+                android:text="定时按擦亮 → 本地 → 视频 → 跳转执行已开启任务"
+                android:textColor="#7A8190"
+                android:textSize="11sp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="自动化"
-                    android:textColor="#111827"
-                    android:textSize="28sp"
-                    android:textStyle="bold" />
+            <!-- 定时：压缩为一行状态 + 两个小按钮 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="74dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_card"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingEnd="12dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="单独运行对应卡片；定时按擦亮 → 本地 → 视频 → 跳转执行已开启任务"
-                    android:textColor="#7A8190"
-                    android:textSize="13sp" />
-
-                <!-- 每日定时：顶部独立长卡片 -->
                 <LinearLayout
-                    android:layout_width="match_parent"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="18dp"
-                    android:background="@drawable/bg_card"
-                    android:orientation="vertical"
-                    android:padding="18dp">
+                    android:layout_weight="1"
+                    android:orientation="vertical">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="每日定时"
                         android:textColor="#111827"
-                        android:textSize="18sp"
+                        android:textSize="16sp"
                         android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/schedule_status_text"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="3dp"
+                        android:maxLines="1"
                         android:text="每日任务：未启用"
                         android:textColor="#6B7280"
-                        android:textSize="13sp" />
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:orientation="horizontal">
-
-                        <Button
-                            android:id="@+id/schedule_button"
-                            android:layout_width="0dp"
-                            android:layout_height="46dp"
-                            android:layout_weight="1"
-                            android:backgroundTint="#E9EEF8"
-                            android:text="设置时间"
-                            android:textColor="#2F6FED"
-                            android:textSize="13sp" />
-
-                        <Space
-                            android:layout_width="10dp"
-                            android:layout_height="1dp" />
-
-                        <Button
-                            android:id="@+id/cancel_button"
-                            android:layout_width="0dp"
-                            android:layout_height="46dp"
-                            android:layout_weight="1"
-                            android:backgroundTint="#F3F4F6"
-                            android:text="取消定时"
-                            android:textColor="#4B5563"
-                            android:textSize="13sp" />
-                    </LinearLayout>
+                        android:textSize="11sp" />
                 </LinearLayout>
 
-                <!-- 一键擦亮：独立长卡片 -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:background="@drawable/bg_card"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="18dp">
+                <Button
+                    android:id="@+id/schedule_button"
+                    android:layout_width="76dp"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:backgroundTint="#E9EEF8"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="设置时间"
+                    android:textColor="#2F6FED"
+                    android:textSize="11sp" />
 
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="一键擦亮"
-                            android:textColor="#374151"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:text="进入“我发布的”，自动点击一次顶部一键擦亮"
-                            android:textColor="#9CA3AF"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <Switch
-                        android:id="@+id/switch_polish_task"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:contentDescription="一键擦亮任务开关" />
-                </LinearLayout>
-
-                <!-- 任务分类：每类独立长卡片 -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:background="@drawable/bg_card"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="18dp">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="闲鱼本地任务"
-                            android:textColor="#374151"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:text="执行签到、浏览、领取等本地任务"
-                            android:textColor="#9CA3AF"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <Switch
-                        android:id="@+id/switch_local_task"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:contentDescription="闲鱼本地任务开关" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:background="@drawable/bg_card"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="18dp">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="视频任务"
-                            android:textColor="#374151"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:text="独立执行视频浏览与相关任务"
-                            android:textColor="#9CA3AF"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <Switch
-                        android:id="@+id/switch_video_task"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:contentDescription="视频任务开关" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:background="@drawable/bg_card"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="18dp">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="跳转任务"
-                            android:textColor="#374151"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:text="执行支付宝、淘宝、农场、闪购等需要跳转的任务"
-                            android:textColor="#9CA3AF"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <Switch
-                        android:id="@+id/switch_jump_task"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:contentDescription="跳转任务开关" />
-                </LinearLayout>
-
-                <!-- 手动执行：与三类任务保持同样的长卡片视觉结构 -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:background="@drawable/bg_card"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="18dp">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="执行任务"
-                            android:textColor="#374151"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:text="立即按当前已开启的任务分类执行"
-                            android:textColor="#9CA3AF"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <Button
-                        android:id="@+id/execute_task_button"
-                        android:layout_width="wrap_content"
-                        android:layout_height="46dp"
-                        android:minWidth="0dp"
-                        android:backgroundTint="#2F6FED"
-                        android:paddingStart="18dp"
-                        android:paddingEnd="18dp"
-                        android:text="立即执行"
-                        android:textColor="#FFFFFF"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
+                <Button
+                    android:id="@+id/cancel_button"
+                    android:layout_width="72dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:minWidth="0dp"
+                    android:backgroundTint="#F3F4F6"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="取消定时"
+                    android:textColor="#4B5563"
+                    android:textSize="11sp" />
             </LinearLayout>
-        </ScrollView>
+
+            <!-- 四类任务等高分布，占满中间可用空间 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="4"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_card"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="一键擦亮" android:textColor="#374151" android:textSize="15sp" android:textStyle="bold" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:text="进入“我发布的”，自动点击一次顶部一键擦亮" android:textColor="#9CA3AF" android:textSize="10sp" />
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_polish_task" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="一键擦亮开关" />
+                </LinearLayout>
+
+                <Space android:layout_width="1dp" android:layout_height="6dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_card"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="闲鱼本地任务" android:textColor="#374151" android:textSize="15sp" android:textStyle="bold" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:text="签到、浏览、领取、商城优惠券等闲鱼内任务" android:textColor="#9CA3AF" android:textSize="10sp" />
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_local_task" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="闲鱼本地任务开关" />
+                </LinearLayout>
+
+                <Space android:layout_width="1dp" android:layout_height="6dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_card"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="视频任务" android:textColor="#374151" android:textSize="15sp" android:textStyle="bold" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:text="执行视频浏览与视频奖励任务" android:textColor="#9CA3AF" android:textSize="10sp" />
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_video_task" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="视频任务开关" />
+                </LinearLayout>
+
+                <Space android:layout_width="1dp" android:layout_height="6dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_card"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="跳转任务" android:textColor="#374151" android:textSize="15sp" android:textStyle="bold" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:text="支付宝、淘宝、农场、闪购等跨页面任务" android:textColor="#9CA3AF" android:textSize="10sp" />
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_jump_task" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="跳转任务开关" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 执行区固定在底部导航上方，不参与滚动 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_card"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingEnd="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="执行任务" android:textColor="#374151" android:textSize="15sp" android:textStyle="bold" />
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:text="按当前已开启分类立即执行" android:textColor="#9CA3AF" android:textSize="10sp" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/execute_task_button"
+                    android:layout_width="104dp"
+                    android:layout_height="42dp"
+                    android:minWidth="0dp"
+                    android:backgroundTint="#2F6FED"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="立即执行"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
 
         <!-- 日志：固定页面，终端内部独立滚动 -->
         <LinearLayout
