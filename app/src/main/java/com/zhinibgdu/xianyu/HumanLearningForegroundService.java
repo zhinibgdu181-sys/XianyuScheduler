@@ -98,7 +98,7 @@ public class HumanLearningForegroundService extends Service {
                 "真人操作学习",
                 NotificationManager.IMPORTANCE_LOW
         );
-        channel.setDescription("仅在闲鱼前台被动学习真实点击和滑动轨迹");
+        channel.setDescription("仅学习闲鱼内单次点击/滑动动作风格，不学习任务流程");
         manager.createNotificationChannel(channel);
     }
 
@@ -118,7 +118,7 @@ public class HumanLearningForegroundService extends Service {
         return builder
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .setContentTitle("学习真人")
-                .setContentText("正在学习闲鱼内真实点击、滑动轨迹、弧度和节奏")
+                .setContentText("仅学习点击抖动、按压和滑动距离/弧度/速度，不学习流程")
                 .setOngoing(true)
                 .setContentIntent(contentIntent)
                 .build();

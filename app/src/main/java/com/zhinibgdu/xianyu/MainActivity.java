@@ -786,13 +786,15 @@ public class MainActivity extends Activity {
             runtimeStatusText.setTextColor(0xFF1D4ED8);
             runtimeStatusText.setBackgroundResource(R.drawable.bg_status_running);
             setStatusMessage(TaskExecutor.getHumanLearningSummaryV450(this)
-                    + "\n只记录闲鱼前台的真实手指操作；点击此卡片可停止学习。");
+                    + "\n只学习单次点击/滑动的动作风格，不学习任务流程、页面顺序或原始点击位置。"
+                    + "\n点击此卡片可停止学习。");
         } else {
             runtimeStatusText.setText("点击开始");
             runtimeStatusText.setTextColor(0xFF166534);
             runtimeStatusText.setBackgroundResource(R.drawable.bg_status_idle);
             setStatusMessage(TaskExecutor.getHumanLearningSummaryV450(this)
-                    + "\n点击此卡片开始学习；进入闲鱼后正常手动点击、滑动即可。");
+                    + "\n点击后进入闲鱼正常操作即可；只学习点击抖动、按压时长、滑动弧度/距离/速度，"
+                    + "不会学习你做任务的完整流程。");
         }
     }
 
@@ -817,7 +819,8 @@ public class MainActivity extends Activity {
         runtimeStatusText.setText("启动中");
         runtimeStatusText.setTextColor(0xFF1D4ED8);
         runtimeStatusText.setBackgroundResource(R.drawable.bg_status_running);
-        setStatusMessage("正在启动学习真人……\n启动后请切到闲鱼，按你平时的方式点击和滑动。");
+        setStatusMessage("正在启动动作风格学习……\n切到闲鱼后按平时方式点击、滑动即可；"
+                    + "不会记录任务流程或页面点击顺序。");
         handler.removeCallbacks(runningRefresh);
         handler.postDelayed(runningRefresh, 800L);
     }
@@ -837,7 +840,8 @@ public class MainActivity extends Activity {
                     + "学习真人已暂停，避免误学程序产生的点击/滑动。");
         } else if (TaskExecutor.isStandaloneHumanLearningV450()) {
             setStatusMessage(TaskExecutor.getHumanLearningSummaryV450(this)
-                    + "\n学习中：只记录闲鱼前台真实手指操作；点击“学习真人”卡片可停止。");
+                    + "\n学习中：仅记录单次手势的相对轨迹和时长，不记录任务流程/点击顺序；"
+                    + "点击“学习真人”卡片可停止。");
         } else if (userRequested) {
             setStatusMessage("日志已刷新 · "
                     + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date())
