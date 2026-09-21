@@ -1578,12 +1578,29 @@ public final class TaskExecutor {
         if (text.contains("试玩") || text.contains("继续试玩")) score++;
         if (text.contains("免费下载") || text.contains("立即下载")) score++;
         if (text.contains("点击/滑动前往跳转或下载应用")
+                || text.contains("点击打开或下载第三方应用")
                 || text.contains("上滑或点击跳转到详情页或第三方应用")
-                || (text.contains("第三方应用") && text.contains("上滑"))) score += 2;
+                || (text.contains("第三方应用") && (text.contains("上滑") || text.contains("点击")))) {
+            score += 2;
+        }
         if (text.contains("广告")) score++;
-        if (text.contains("应用详情") || text.contains("版本号：") || text.contains("开发者：")) score += 2;
+        if (text.contains("应用详情")
+                || text.contains("应用名称")
+                || text.contains("应用版本")
+                || text.contains("版本号：")
+                || text.contains("开发者：")
+                || text.contains("开发者:")
+                || text.contains("权限详情")
+                || text.contains("隐私协议")) {
+            score += 2;
+        }
         if (looksLikeVideoExitPromptV485(text)) score += 3;
-        if (text.contains("去体验15秒可立即领奖") || text.contains("体验15秒可立即领奖")) score += 2;
+        if (text.contains("去体验15秒可立即领奖")
+                || text.contains("体验15秒可立即领奖")
+                || text.contains("点击广告拿奖励")
+                || text.contains("即可获得奖励")) {
+            score += 2;
+        }
         return score >= 2;
     }
 
@@ -4655,15 +4672,22 @@ public final class TaskExecutor {
                 diagnostic("[视频] 当前离开闲鱼：" + printableFg(fg));
                 long elapsed = SystemClock.elapsedRealtime() - start;
 
-                if (elapsed >= requiredVideoMs) {
+                if (elapsed >= requiredVideoMs && !attemptedReturn) {
                     TaskProfileStoreV48.recordRecovery(taskName, "video_external:" + printableFg(fg));
                     attemptedReturn = true;
-                    if (!doubleSwipeDone) {
+
+                    // "android" here is a system surface/chooser, not a real third-party
+                    // task page. Close it once after the required dwell, then let the
+                    // next loop re-classify the foreground instead of starting a full nav.
+                    if ("android".equals(fg)) {
+                        diagnostic("[视频退出V4.86] 满足观看时间后仍在Android系统层，执行一次BACK");
+                        rootWithPath(suPath, "input keyevent KEYCODE_BACK");
+                        SystemClock.sleep(220L);
+                    } else {
                         doubleSwipeDone = fastDoubleRightBackV420(
                                 suPath, taskName, "视频完成后的外部页快速退出");
+                        if (doubleSwipeDone) return true;
                     }
-                    if (doubleSwipeDone) return true;
-                    if (recoverToXianyuTaskPanelV47(suPath, "视频外部跳转兜底恢复")) return true;
                 }
                 continue;
             }
@@ -4671,7 +4695,7 @@ public final class TaskExecutor {
             // Once the required dwell has elapsed, start exit immediately.
             // Do not wait for another ad OCR match; that was the source of long stalls.
             long elapsedBeforeOcr = SystemClock.elapsedRealtime() - start;
-            if (elapsedBeforeOcr >= exitThresholdMs && !doubleSwipeDone) {
+            if (elapsedBeforeOcr >= exitThresholdMs && !attemptedReturn) {
                 attemptedReturn = true;
                 TaskProfileStoreV48.recordRecovery(taskName, "video_dwell_complete_fast_exit");
                 diagnostic("[视频快速退出V4.82] 已满足观看时间 "
@@ -4679,8 +4703,7 @@ public final class TaskExecutor {
                 doubleSwipeDone = fastDoubleRightBackV420(
                         suPath, taskName, "视频达到最低观看时间后的立即退出");
                 if (doubleSwipeDone) return true;
-                // If the double gesture did not land on the task panel, verify/recover now.
-                if (recoverToXianyuTaskPanelV47(suPath, "视频达到观看时间后立即恢复任务面板")) return true;
+                diagnostic("[视频退出V4.86] 双返回未结束广告，继续在当前广告页做轻量确认，不启动完整导航");
             }
 
             // OCR is expensive. Before the required dwell, sample only occasionally.
@@ -4695,14 +4718,13 @@ public final class TaskExecutor {
                 long elapsed = SystemClock.elapsedRealtime() - start;
                 diagnostic("[视频] 检测到广告/试玩页，elapsed=" + elapsed + "ms");
 
-                if (elapsed >= requiredVideoMs && !doubleSwipeDone) {
+                if (elapsed >= requiredVideoMs) {
                     attemptedReturn = true;
-                    TaskProfileStoreV48.recordRecovery(taskName, "video_ad_fast_double_back");
-                    diagnostic("[视频广告恢复V4.42.3] 已达到要求观看时间，立即快速连续双右滑返回");
-                    doubleSwipeDone = fastDoubleRightBackV420(
-                            suPath, taskName, "视频广告页达到最低观看时间后的快速双滑");
-                    if (doubleSwipeDone) return true;
-                    diagnostic("[视频广告恢复V4.42.3] 双滑未确认任务面板，交给后续受控恢复");
+                    if (finishVideoAdExitV486(suPath, ocr, taskName)) {
+                        taskPanelSeenAfterWatchV420 = true;
+                        return true;
+                    }
+                    diagnostic("[视频退出V4.86] 当前广告尚未成功关闭，继续轻量轮询");
                 }
                 continue;
             }
@@ -5709,6 +5731,101 @@ public final class TaskExecutor {
         return false;
     }
 
+    private static boolean clickVisibleAdCloseV486(
+            String suPath,
+            ScreenOcr.Snapshot snapshot
+    ) {
+        if (snapshot == null || snapshot.isEmpty()) return false;
+        String pageText = combinedTextV45(null, snapshot);
+        if (!looksLikeAdOrInstallPageV47(pageText)) return false;
+
+        ScreenOcr.Item best = null;
+        float bestX = -1f;
+        for (ScreenOcr.Item item : snapshot.items) {
+            if (item == null || item.text == null) continue;
+            String compact = item.text.replaceAll("\\s+", "").trim();
+            boolean closeToken = "X".equalsIgnoreCase(compact)
+                    || "×".equals(compact)
+                    || "✕".equals(compact)
+                    || "✖".equals(compact)
+                    || "关闭".equals(compact);
+            if (!closeToken) continue;
+
+            if (snapshot.width > 0) {
+                float xr = (float) item.centerX() / (float) snapshot.width;
+                if (xr < 0.60f) continue;
+                if (xr > bestX) {
+                    bestX = xr;
+                    best = item;
+                }
+            } else {
+                best = item;
+                break;
+            }
+        }
+
+        if (best == null) return false;
+        diagnostic("[视频退出V4.86] OCR命中广告关闭按钮："
+                + best.text + " → " + best.centerX() + "," + best.centerY());
+        if (!ensureFg(suPath)) return false;
+        RootResult r = rootWithPath(
+                suPath, "input tap " + best.centerX() + " " + best.centerY());
+        if (r.exitCode != 0) return false;
+        SystemClock.sleep(220L);
+        invalidateOcrCacheV411();
+        return true;
+    }
+
+    private static boolean finishVideoAdExitV486(
+            String suPath,
+            ScreenOcr.Snapshot snapshot,
+            String taskName
+    ) {
+        if (snapshot == null || snapshot.isEmpty()) return false;
+        if (isTaskPageV45(null, snapshot)) return true;
+
+        String text = combinedTextV45(null, snapshot);
+        if (handleVideoExitPromptV485(suPath, snapshot, taskName)) return true;
+
+        // Some rewarded ads explicitly require one more Back after the first close.
+        if (text.contains("再按一次关闭广告")) {
+            diagnostic("[视频退出V4.86] 页面提示“再按一次关闭广告”，立即执行一次系统返回");
+            RootResult back = rootWithPath(suPath, "input keyevent KEYCODE_BACK");
+            if (back.exitCode == 0 && !userAborted) {
+                SystemClock.sleep(180L);
+                invalidateOcrCacheV411();
+                ScreenOcr.Snapshot afterBack =
+                        captureOcrV45(suPath, "视频再次返回后确认");
+                if (isTaskPageV45(null, afterBack)) return true;
+                if (handleVideoExitPromptV485(suPath, afterBack, taskName)) return true;
+                snapshot = afterBack;
+                text = combinedTextV45(null, afterBack);
+            }
+        }
+
+        // Current Kuaishou ad creative exposes an explicit X close control. Prefer
+        // that visible control over repeatedly rebuilding navigation behind the ad.
+        if (looksLikeAdOrInstallPageV47(text) && clickVisibleAdCloseV486(suPath, snapshot)) {
+            ScreenOcr.Snapshot afterClose =
+                    captureOcrV45(suPath, "视频广告X关闭后确认");
+            if (isTaskPageV45(null, afterClose)) return true;
+            if (handleVideoExitPromptV485(suPath, afterClose, taskName)) return true;
+
+            String afterText = combinedTextV45(null, afterClose);
+            if (afterText.contains("再按一次关闭广告")) {
+                diagnostic("[视频退出V4.86] X关闭后仍提示再次关闭，补一次系统返回");
+                rootWithPath(suPath, "input keyevent KEYCODE_BACK");
+                SystemClock.sleep(180L);
+                invalidateOcrCacheV411();
+                ScreenOcr.Snapshot finalCheck =
+                        captureOcrV45(suPath, "视频广告最终返回确认");
+                if (isTaskPageV45(null, finalCheck)) return true;
+                if (handleVideoExitPromptV485(suPath, finalCheck, taskName)) return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean handleVideoExitPromptV485(
             String suPath,
             ScreenOcr.Snapshot snapshot,
@@ -5810,12 +5927,12 @@ public final class TaskExecutor {
         }
 
         String postDoubleText = combinedTextV45(null, ocr);
-        if (handleVideoExitPromptV485(suPath, ocr, taskName)) {
+        if (finishVideoAdExitV486(suPath, ocr, taskName)) {
             TaskProfileStoreV48.setReturnSwipes(taskName, 2);
             return true;
         }
         if (looksLikeAdOrInstallPageV47(postDoubleText)) {
-            diagnostic("[视频快速双返回V4.85] 双滑后仍为广告/退出确认页，执行受控第3次右滑");
+            diagnostic("[视频快速双返回V4.86] 双滑后仍为广告页，执行受控第3次右滑");
             SystemClock.sleep(90L);
             RootResult third = rootWithPath(suPath, gesture);
             if (third.exitCode == 0 && !userAborted) {
@@ -5827,7 +5944,7 @@ public final class TaskExecutor {
                     diagnostic("[视频快速双返回V4.85] ✅ 第3次右滑后已确认任务面板");
                     return true;
                 }
-                if (handleVideoExitPromptV485(suPath, thirdOcr, taskName)) {
+                if (finishVideoAdExitV486(suPath, thirdOcr, taskName)) {
                     return true;
                 }
             }
