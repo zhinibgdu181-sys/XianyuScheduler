@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
     private TextView todaySummaryText;
     private TextView todayCompletedText;
     private TextView dataPathText;
-    private Switch polishSwitch, localSwitch, videoSwitch, jumpSwitch;
+    private Switch polishSwitch, localSwitch, videoSwitch, gameSwitch;
     private TextView logText;
     private ScrollView logScroll;
 
@@ -144,23 +144,23 @@ public class MainActivity extends Activity {
         polishSwitch = findViewById(R.id.switch_polish_task);
         localSwitch = findViewById(R.id.switch_local_task);
         videoSwitch = findViewById(R.id.switch_video_task);
-        jumpSwitch = findViewById(R.id.switch_jump_task);
+        gameSwitch = findViewById(R.id.switch_game_task);
         polishSwitch.setChecked(AppConfig.isPolishTaskEnabled(this));
         localSwitch.setChecked(AppConfig.isLocalTaskEnabled(this));
         videoSwitch.setChecked(AppConfig.isVideoTaskEnabled(this));
-        jumpSwitch.setChecked(AppConfig.isJumpTaskEnabled(this));
+        gameSwitch.setChecked(AppConfig.isGameTaskEnabled(this));
         android.widget.CompoundButton.OnCheckedChangeListener save = (button, checked) ->
                 AppConfig.saveTaskSwitches(
                         this,
                         polishSwitch.isChecked(),
                         localSwitch.isChecked(),
                         videoSwitch.isChecked(),
-                        jumpSwitch.isChecked()
+                        gameSwitch.isChecked()
                 );
         polishSwitch.setOnCheckedChangeListener(save);
         localSwitch.setOnCheckedChangeListener(save);
         videoSwitch.setOnCheckedChangeListener(save);
-        jumpSwitch.setOnCheckedChangeListener(save);
+        gameSwitch.setOnCheckedChangeListener(save);
         Button todayRefresh = findViewById(R.id.today_refresh_button);
         Button showPath = findViewById(R.id.show_path_button);
 
@@ -561,9 +561,9 @@ public class MainActivity extends Activity {
         boolean polish = polishSwitch.isChecked();
         boolean local = localSwitch.isChecked();
         boolean video = videoSwitch.isChecked();
-        boolean jump = jumpSwitch.isChecked();
+        boolean game = gameSwitch.isChecked();
 
-        if (!polish && !local && !video && !jump) {
+        if (!polish && !local && !video && !game) {
             setStatusMessage("当前任务开关均已关闭。请至少开启一个任务后再点击“执行任务”。");
             Toast.makeText(this, "请至少开启一个任务", Toast.LENGTH_SHORT).show();
             return;
@@ -579,9 +579,9 @@ public class MainActivity extends Activity {
             if (selected.length() > 0) selected.append("、");
             selected.append("视频任务");
         }
-        if (jump) {
+        if (game) {
             if (selected.length() > 0) selected.append("、");
-            selected.append("跳转任务");
+            selected.append("小游戏任务");
         }
 
         TaskCategory selectedCategory = null;
@@ -598,8 +598,8 @@ public class MainActivity extends Activity {
             selectedCategory = TaskCategory.VIDEO;
             selectedCount++;
         }
-        if (jump) {
-            selectedCategory = TaskCategory.JUMP;
+        if (game) {
+            selectedCategory = TaskCategory.GAME;
             selectedCount++;
         }
 
