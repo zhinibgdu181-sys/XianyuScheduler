@@ -93,7 +93,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="2dp"
-                        android:text="点击卡片开始学习。仅在闲鱼前台记录真实手指的点击落点、按压时间、滑动完整轨迹、弧度、速度变化和停顿节奏；学习时不会自动点击。"
+                        android:text="点击卡片开始学习。只学习单次点击/滑动的动作风格：点击落点的小幅变化、按压时长、滑动抖动、弧度、距离和速度；不学习任务流程、页面顺序或你原来点击的具体位置。"
                         android:textColor="#6B7280"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -217,7 +217,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
                         android:lineSpacingExtra="5dp"
-                        android:text="• 学习真人：只在闲鱼前台学习真实点击、按压时长、滑动轨迹、弧度、速度变化和停顿节奏。\n• 自动执行：执行时优先采用已学习的真人触摸节奏与滑动曲线；目标点击仍受安全区域约束。\n• 记录：按日期查看已验证完成的任务与可确认的闲鱼币收益。\n• 自动化：一键擦亮、本地、视频、跳转四类任务独立运行和每日定时。\n• 日志：查看完整运行过程和故障信息。"
+                        android:text="• 学习真人：只学习单次手势风格，不学习完整任务流程；记录点击微小偏移、按压时长、滑动抖动、弧度、距离和速度。\n• 自动执行：任务逻辑仍由程序自己判断；点击位置会在目标安全范围附近小幅变化，滑动会复用已学习的距离/曲线/速度，不固定在同一像素。\n• 记录：按日期查看已验证完成的任务与可确认的闲鱼币收益。\n• 自动化：一键擦亮、本地、视频、跳转四类任务独立运行和每日定时。\n• 日志：查看完整运行过程和故障信息。"
                         android:textColor="#4B5563"
                         android:textSize="14sp" />
                 </LinearLayout>
