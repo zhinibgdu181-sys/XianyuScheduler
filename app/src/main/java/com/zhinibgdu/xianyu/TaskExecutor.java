@@ -4658,12 +4658,12 @@ public final class TaskExecutor {
                     return true;
                 }
                 diagnostic("[视频] 已回任务面板但观看时间不足：" + elapsed
-                        + "/15000ms；继续等待，禁止提前判定完成");
+                        + "/required=" + requiredVideoMs + "ms；继续等待，禁止提前判定完成");
             }
 
-            // 视频任务必须满足“至少观看15秒 + 真实任务面板确认”两个条件。
-            // 旧逻辑的 XML 兜底没有检查15秒，导致刚进入任务面板就可能被提前判定完成。
-            if (loop % 4 == 0) {
+            // 视频任务必须满足“要求观看时间 + 真实任务面板确认”两个条件。
+            // 达到观看时间前不做昂贵 XML dump。
+            if (elapsedBeforeOcr >= requiredVideoMs && loop % 4 == 0) {
                 String xml = dumpUi(suPath);
                 long elapsed = SystemClock.elapsedRealtime() - start;
                 if (elapsed >= requiredVideoMs && isTaskPageV45(xml, ocr)) {
@@ -4673,12 +4673,12 @@ public final class TaskExecutor {
                 }
                 if (isTaskPageV45(xml, ocr)) {
                     diagnostic("[视频] XML确认已回任务面板，但观看时间不足："
-                            + elapsed + "/15000ms；禁止提前判定完成");
+                            + elapsed + "/required=" + requiredVideoMs + "ms；禁止提前判定完成");
                 }
             }
 
             if (sawAd
-                    && SystemClock.elapsedRealtime() - start >= 24000L
+                    && SystemClock.elapsedRealtime() - start >= Math.max(requiredVideoMs, videoTimeout - 1000L)
                     && !doubleSwipeDone
                     && !taskPanelSeenAfterWatchV420) {
                 attemptedReturn = true;
@@ -5870,13 +5870,16 @@ public final class TaskExecutor {
     // monitor below and stores isolated relative gesture style samples.
 
     private static void startPhysicalTouchMonitorV48(String suPath) {
+        final String touchLogPrefix = standaloneHumanLearningV450
+                ? "[手势细节学习V4.50]"
+                : "[触摸接管监测V4.50]";
         stopPhysicalTouchMonitorV48();
         physicalTouchDetected = false;
         physicalTouchAt = 0L;
 
         String device = findTouchscreenDeviceV48(suPath);
         if (device == null || device.isEmpty()) {
-            diagnostic("[手势细节学习V4.50] 未识别到物理触摸设备");
+            diagnostic(touchLogPrefix + "未识别到物理触摸设备");
             return;
         }
 
@@ -5890,7 +5893,7 @@ public final class TaskExecutor {
         physicalTouchMaxYV469 = touchMaxY;
         physicalTouchDevice = device;
 
-        diagnostic("[手势细节学习V4.50] 触摸设备=" + device
+        diagnostic(touchLogPrefix + "触摸设备=" + device
                 + " raw=" + touchMaxX + "x" + touchMaxY
                 + " screen=" + screenW + "x" + screenH);
 
@@ -5913,7 +5916,7 @@ public final class TaskExecutor {
                         "getevent -lt " + device + " 2>/dev/null"
                 });
                 touchMonitorProcess = process;
-                diagnostic("[手势细节学习V4.50] getevent 已开始监听");
+                diagnostic(touchLogPrefix + "getevent 已开始监听");
 
                 BufferedReader reader = new BufferedReader(
                         new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
@@ -5968,7 +5971,7 @@ public final class TaskExecutor {
                         if (syntheticGestureActiveV4505
                                 || (now <= syntheticInputIgnoreUntilV411
                                 && now - lastSyntheticInputAtV411 <= 2200L)) {
-                            diagnostic("[手势细节学习V4.50] 忽略程序合成触摸尾事件");
+                            diagnostic(touchLogPrefix + "忽略程序合成触摸尾事件");
                             continue;
                         }
 
@@ -5979,7 +5982,7 @@ public final class TaskExecutor {
                             String fg = getFg(suPath, false);
                             if (!TARGET_PACKAGE.equals(fg)) {
                                 gestureShouldLearn = false;
-                                diagnostic("[手势细节学习V4.50] 非闲鱼前台，不记录本次触摸：" + fg);
+                                diagnostic(touchLogPrefix + "非闲鱼前台，不记录本次触摸：" + fg);
                                 continue;
                             }
                         } else {
@@ -6035,7 +6038,7 @@ public final class TaskExecutor {
                                         screenH,
                                         trajectory
                                 );
-                                diagnostic("[手势细节学习V4.50] TAP "
+                                diagnostic(touchLogPrefix + "TAP "
                                         + endX + "," + endY
                                         + " hold=" + duration + "ms"
                                         + " points=" + trajectory.size());
@@ -6050,7 +6053,7 @@ public final class TaskExecutor {
                                         screenH,
                                         trajectory
                                 );
-                                diagnostic("[手势细节学习V4.50] SWIPE "
+                                diagnostic(touchLogPrefix + "SWIPE "
                                         + startX + "," + startY
                                         + "→" + endX + "," + endY
                                         + " duration=" + duration + "ms"
@@ -6074,13 +6077,13 @@ public final class TaskExecutor {
                     }
                     if (!userAborted && !running) break;
                     if (userAborted && !isHumanTeachingActiveV466()) {
-                        diagnostic("[手势细节学习V4.50] 真人学习窗口已结束，退出触摸监听");
+                        diagnostic(touchLogPrefix + "真人学习窗口已结束，退出触摸监听");
                         break;
                     }
                 }
             } catch (Throwable t) {
                 if (running || userAborted || standaloneHumanLearningV450) {
-                    diagnostic("[手势细节学习V4.50] 触摸监听退出：" + t);
+                    diagnostic(touchLogPrefix + "触摸监听退出：" + t);
                 }
             } finally {
                 if (process != null) {
