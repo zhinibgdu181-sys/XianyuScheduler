@@ -2723,7 +2723,8 @@ public final class TaskExecutor {
         if (containsAny(name, "视频")) return 4;
         if (containsAny(name, "浏览")) return 3;
         String normalized = normalizeTaskOcrTextV483(name);
-        if (containsAny(normalized, "逛逛商城领超值优惠券", "商城", "好物")) return 2;
+        if (isMallCouponBrowseTaskV483(name)
+                || containsAny(normalized, "商城", "好物")) return 2;
         return 1;
     }
 
@@ -3712,8 +3713,7 @@ public final class TaskExecutor {
     private static boolean isWelfareBrowseTaskV4433(String taskName) {
         String n = normalizeTaskOcrTextV483(taskName);
         return n.contains("去浏览福利好物")
-                || n.contains("逛逛商城领超值优惠券")
-                || (n.contains("逛逛商城") && n.contains("优惠券"));
+                || isMallCouponBrowseTaskV483(taskName);
     }
 
     private static boolean containsBrowseCountdownV4433(String text) {
@@ -3732,8 +3732,7 @@ public final class TaskExecutor {
     private static boolean isDeterministicInternalBrowseTaskV4432(String taskName) {
         String n = normalizeTaskOcrTextV483(taskName);
         return n.contains("去浏览福利好物")
-                || n.contains("逛逛商城领超值优惠券")
-                || (n.contains("逛逛商城") && n.contains("优惠券"));
+                || isMallCouponBrowseTaskV483(taskName);
     }
 
     private static ScreenOcr.Snapshot freshTaskPanelOcrV415() {
@@ -3973,7 +3972,8 @@ public final class TaskExecutor {
         boolean isSearch = containsAny(taskName, "搜一搜", "搜索", "搜商品");
         boolean isBounce = isBounceTask(taskName);
         boolean isInternalBrowse = !isBounce
-                && containsAny(taskName, INTERNAL_BROWSE_KEYWORDS);
+                && (containsAny(taskName, INTERNAL_BROWSE_KEYWORDS)
+                || isMallCouponBrowseTaskV483(taskName));
 
 
         long defaultWaitMs = defaultTaskWaitV415(
@@ -4017,6 +4017,24 @@ public final class TaskExecutor {
             // after our previous 8-20s waits the page still had 10-16s remaining.
             boolean welfareBrowse = isWelfareBrowseTaskV4433(taskName);
             boolean browseCountdownConfirmedComplete = !welfareBrowse;
+
+            // The page itself is the final authority. For the mall-coupon task,
+            // verify the destination once and switch to countdown-driven browsing
+            // whenever “滑动浏览Ns” is visible, regardless of title OCR spelling.
+            if (isMallCouponBrowseTaskV483(taskName)) {
+                if (!paceSleepV415(500L, 750L)) return false;
+                ScreenOcr.Snapshot firstBrowseProbe =
+                        captureOcrV45(suPath, "商城浏览页面确认");
+                String firstBrowseText = combinedTextV45(null, firstBrowseProbe);
+                if (containsBrowseCountdownV4433(firstBrowseText)) {
+                    welfareBrowse = true;
+                    isInternalBrowse = true;
+                    browseCountdownConfirmedComplete = false;
+                    diagnostic("[浏览倒计时V4.84] 已识别页面倒计时："
+                            + extractBrowseCountdownV4433(firstBrowseText));
+                }
+            }
+
             long effectiveWaitMs = welfareBrowse ? Math.max(waitMs, 52000L) : waitMs;
 
             while (SystemClock.elapsedRealtime() - started < effectiveWaitMs) {
@@ -5830,9 +5848,7 @@ public final class TaskExecutor {
         long explicit = explicitSecondsRequirementV415(taskName);
         if (explicit > 0L) return Math.min(45000L, explicit + 900L);
         if (isSearch) return 5200L;
-        String normalizedTask = normalizeTaskOcrTextV483(taskName);
-        if (normalizedTask.contains("逛逛商城领超值优惠券")
-                || (normalizedTask.contains("逛逛商城") && normalizedTask.contains("优惠券"))) return 21000L;
+        if (isMallCouponBrowseTaskV483(taskName)) return 21000L;
         // “去浏览福利好物”需要完整浏览约 15 秒；旧版 8200ms 只够滑动两次。
         if (isInternalBrowse && taskName != null
                 && taskName.replaceAll("\s+", "").contains("去浏览福利好物")) return 15000L;
@@ -5854,9 +5870,7 @@ public final class TaskExecutor {
     ) {
         long explicit = explicitSecondsRequirementV415(taskName);
         if (explicit > 0L) return Math.min(45000L, explicit + 500L);
-        String normalizedTask = normalizeTaskOcrTextV483(taskName);
-        if (normalizedTask.contains("逛逛商城领超值优惠券")
-                || (normalizedTask.contains("逛逛商城") && normalizedTask.contains("优惠券"))) return 20500L;
+        if (isMallCouponBrowseTaskV483(taskName)) return 20500L;
         if (isInternalBrowse && taskName != null
                 && taskName.replaceAll("\s+", "").contains("去浏览福利好物")) return 15000L;
         if (isInternalBrowse) return 6200L;
@@ -7821,6 +7835,13 @@ public final class TaskExecutor {
                 .replace("獎", "奖")
                 .replace("還", "还")
                 .replace("點", "点");
+    }
+
+    private static boolean isMallCouponBrowseTaskV483(String taskName) {
+        String n = normalizeTaskOcrTextV483(taskName);
+        // OCR repeatedly turns “商城” into “商坡/商城坡”. Do not key this task
+        // off the unstable middle word; “逛逛 + 优惠券” is the stable semantic pair.
+        return n.contains("逛逛") && n.contains("优惠券");
     }
 
     private static String trimForLog(
