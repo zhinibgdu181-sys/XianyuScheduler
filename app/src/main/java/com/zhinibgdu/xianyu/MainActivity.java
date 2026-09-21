@@ -87,8 +87,7 @@ public class MainActivity extends Activity {
         public void run() {
             showStatus(false);
             refreshTodayCompleted();
-            if (TaskExecutor.isRunning()
-                    || TaskExecutor.isStandaloneHumanLearningV450()) {
+            if (TaskExecutor.isRunning()) {
                 handler.postDelayed(this, 1500L);
             }
         }
