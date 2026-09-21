@@ -263,7 +263,8 @@ public final class TaskExecutor {
         cachedSuPath = suPath;
         standaloneHumanLearningV450 = true;
         standaloneHumanLearningStartedAtV450 = SystemClock.elapsedRealtime();
-        // Legacy human-learning/getevent startup removed. Automation no longer starts gesture learning.
+        // Learn only single-gesture motor style (tap/swipe timing/trajectory), never task flow.
+        startPhysicalTouchMonitorV48(suPath);
 
         if (touchMonitorThread == null || !touchMonitorThread.isAlive()) {
             standaloneHumanLearningV450 = false;
@@ -7393,7 +7394,14 @@ public final class TaskExecutor {
                 return new RootResult(-4, "", "manual_takeover_hard_stop");
             }
         }
-        // Humanized/learned gesture injection removed. Execute the requested input directly.
+        // Apply learned single-gesture motor style only. Task selection/page flow remains programmatic.
+        if (command != null && running) {
+            RootResult humanized = tryHumanizedInputV450(suPath, command);
+            if (humanized != null && humanized.exitCode == 0) return humanized;
+            if (humanized != null) {
+                diagnostic("[手势细节学习] 轨迹注入失败，回退原始 input 命令");
+            }
+        }
 
         if (command != null) {
             String c = command.trim().toLowerCase(Locale.US);
