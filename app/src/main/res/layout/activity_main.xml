@@ -46,59 +46,6 @@
                     android:textSize="13sp" />
 
                 <LinearLayout
-                    android:id="@+id/runtime_status_card"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="18dp"
-                    android:background="@drawable/bg_card"
-                    android:clickable="false"
-                    android:focusable="false"
-                    android:elevation="2dp"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="运行状态"
-                            android:textColor="#374151"
-                            android:textSize="15sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/runtime_status_text"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:background="@drawable/bg_status_idle"
-                            android:paddingStart="11dp"
-                            android:paddingTop="5dp"
-                            android:paddingEnd="11dp"
-                            android:paddingBottom="5dp"
-                            android:text="待执行"
-                            android:textColor="#166534"
-                            android:textSize="12sp"
-                            android:textStyle="bold" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/status_detail_text"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:lineSpacingExtra="2dp"
-                        android:text="任务未运行。点击下方执行按钮后，这里会显示当前执行状态和日志提示。"
-                        android:textColor="#6B7280"
-                        android:textSize="13sp" />
-                </LinearLayout>
-
-                <LinearLayout
                     android:id="@+id/gesture_learning_card"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
