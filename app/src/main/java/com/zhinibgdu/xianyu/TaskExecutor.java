@@ -1105,7 +1105,7 @@ public final class TaskExecutor {
 
     private static boolean isAlreadyPolishedListingsV4505(ScreenOcr.Snapshot snapshot) {
         if (snapshot == null || snapshot.isEmpty()) return false;
-        String text = snapshot.fullText == null ? "" : snapshot.fullText.replaceAll("\\\\s+", "");
+        String text = snapshot.fullText == null ? "" : snapshot.fullText.replaceAll("\\s+", "");
         return text.contains("有计划投放中")
                 || text.contains("今日有超强擦亮计划投放中")
                 || text.contains("超强擦亮计划投放中");
@@ -5865,9 +5865,7 @@ public final class TaskExecutor {
         }
     }
 
-    // V4.50.2: legacy automatic 90-second human-operation / fruit-teaching
-    // observers were removed. Explicit "手势细节学习" uses only the physical touch
-    // monitor below and stores isolated relative gesture style samples.
+    // Only isolated gesture-style learning remains. Task-flow/page-sequence teaching is disabled.
 
     private static void startPhysicalTouchMonitorV48(String suPath) {
         final String touchLogPrefix = standaloneHumanLearningV450
