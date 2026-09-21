@@ -46,13 +46,13 @@
                     android:textSize="13sp" />
 
                 <LinearLayout
-                    android:id="@+id/human_learning_card"
+                    android:id="@+id/runtime_status_card"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="18dp"
                     android:background="@drawable/bg_card"
-                    android:clickable="true"
-                    android:focusable="true"
+                    android:clickable="false"
+                    android:focusable="false"
                     android:elevation="2dp"
                     android:orientation="vertical"
                     android:padding="16dp">
@@ -67,7 +67,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="学习真人"
+                            android:text="运行状态"
                             android:textColor="#374151"
                             android:textSize="15sp"
                             android:textStyle="bold" />
@@ -81,7 +81,7 @@
                             android:paddingTop="5dp"
                             android:paddingEnd="11dp"
                             android:paddingBottom="5dp"
-                            android:text="点击开始"
+                            android:text="待执行"
                             android:textColor="#166534"
                             android:textSize="12sp"
                             android:textStyle="bold" />
@@ -93,7 +93,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="2dp"
-                        android:text="点击卡片开始学习。只学习单次点击/滑动的动作风格：点击落点的小幅变化、按压时长、滑动抖动、弧度、距离和速度；不学习任务流程、页面顺序或你原来点击的具体位置。"
+                        android:text="任务未运行。点击下方执行按钮后，这里会显示当前执行状态和日志提示。"
                         android:textColor="#6B7280"
                         android:textSize="13sp" />
                 </LinearLayout>
