@@ -1186,7 +1186,7 @@ public final class TaskExecutor {
         }
 
         // One conservative recovery only. Never loop blindly on an unknown page.
-        if (page.kind == PageKindV411.UNKNOWN_XIANYU && TARGET_PACKAGE.equals(page.foreground)) {
+        if (page.kind == PageKindV411.UNKNOWN_XIANYU) {
             diagnostic("[全局前置V4.50.6] 闲鱼未知残留页，执行一次受控右侧返回");
             if (!preferredRightBackOnceV410(suPath, "全局前置-未知残留页")) return false;
             if (!sleepAbortableV48(420L)) return false;
@@ -1204,8 +1204,7 @@ public final class TaskExecutor {
             return safe;
         }
 
-        diagnostic("[全局前置V4.50.6] 页面不可安全继续：" + page.kind
-                + " fg=" + printableFg(page.foreground));
+        diagnostic("[全局前置V4.50.6] 页面不可安全继续：" + page.kind);
         return false;
     }
 
