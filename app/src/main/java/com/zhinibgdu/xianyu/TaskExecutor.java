@@ -253,10 +253,19 @@ public final class TaskExecutor {
         lastSyntheticInputAtV411 = 0L;
 
         String suPath = cachedSuPath;
-        if (suPath == null || suPath.isEmpty()) suPath = findSuPathWithRetry();
+        if (suPath == null || suPath.isEmpty()) {
+            suPath = findSuPathWithRetry();
+        }
+        if (suPath == null || suPath.isEmpty()) {
+            diagnostic("[手势细节学习V4.83] ROOT 首轮暂不可用，短暂等待 KernelSU 就绪");
+            for (int retry = 1; retry <= 6 && (suPath == null || suPath.isEmpty()); retry++) {
+                SystemClock.sleep(500L);
+                suPath = findSuPath();
+            }
+        }
         if (suPath == null || suPath.isEmpty()) {
             standaloneHumanLearningV450 = false;
-            diagnostic("[手势细节学习V4.50] ROOT 不可用，无法启动触摸学习");
+            diagnostic("[手势细节学习V4.83] ROOT 复检仍不可用，请确认 KernelSU 已授权");
             return false;
         }
 
@@ -2327,14 +2336,11 @@ public final class TaskExecutor {
             // OCR 视口与上轮耗尽视口相同、准备结束分类时，才做一次 XML 复核。
             // 这样保留最终防漏检查，同时避免每滚动一屏都支付 XML dump 成本。
             String ocrViewportFingerprint = taskCandidateFingerprintV4438(candidates);
-            boolean finalXmlConfirmation = !ocrViewportFingerprint.isEmpty()
-                    && ocrViewportFingerprint.equals(exhaustedViewport);
 
-            // OCR 完全为空时使用 XML 恢复候选；重复视口即将结束分类时，
-            // 再用 XML 合并候选完成一次保守复核。
-            if (xml == null && (candidates.isEmpty() || finalXmlConfirmation)) {
-                // OCR 漏掉整屏按钮时仍做 XML 兜底；到达重复视口、准备结束
-                // 分类时也做一次最终复核，不能仅凭单一 OCR 帧宣称完成。
+            // UIAutomator on this WebView is slow and frequently fails. If OCR has
+            // already found task buttons, trust that frame and continue immediately.
+            // XML is reserved only for a genuinely empty OCR frame.
+            if (xml == null && candidates.isEmpty()) {
                 xml = dumpUi(suPath);
             }
             if (xml != null) {
@@ -2446,8 +2452,8 @@ public final class TaskExecutor {
                 String fingerprint = taskCandidateFingerprintV4438(candidates);
                 repeatedViewport = fingerprint.equals(exhaustedViewport) ? repeatedViewport + 1 : 0;
                 exhaustedViewport = fingerprint;
-                // 第二次看到同一视口时，前面已经强制执行过一次 XML 最终复核；
-                // 此时可以安全结束，不再为相同底部页面多做一整轮 OCR/XML。
+                // 第二次看到同一非空视口且仍无当前分类可执行任务时直接结束；
+                // 不再为同一 WebView 额外支付一次高成本 UIAutomator dump。
                 if (repeatedViewport >= 1) {
                     diagnostic("[任务分类] 连续多次扫描仍无可执行任务，确认当前分类没有更多可执行任务："
                             + activeCategory.label);
