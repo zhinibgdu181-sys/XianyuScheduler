@@ -330,11 +330,13 @@
         </ScrollView>
 
         <!-- 自动化：定时 + 四个独立任务卡片 -->
-        <LinearLayout
+        <ScrollView
             android:id="@+id/page_automation"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:orientation="vertical"
+            android:fillViewport="true"
+            android:clipToPadding="false"
+            android:scrollbars="vertical"
             android:visibility="gone">
 
             <LinearLayout
@@ -344,7 +346,7 @@
                 android:paddingStart="18dp"
                 android:paddingTop="24dp"
                 android:paddingEnd="18dp"
-                android:paddingBottom="10dp">
+                android:paddingBottom="24dp">
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -626,7 +628,7 @@
                 </LinearLayout>
 
             </LinearLayout>
-        </LinearLayout>
+        </ScrollView>
 
         <!-- 日志：固定页面，终端内部独立滚动 -->
         <LinearLayout
