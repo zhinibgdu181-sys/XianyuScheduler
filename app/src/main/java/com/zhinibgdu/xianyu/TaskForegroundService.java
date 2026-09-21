@@ -29,7 +29,6 @@ public class TaskForegroundService extends Service {
     private boolean active;
     private boolean destroyed;
     private boolean finishing;
-    private boolean manualTakeoverTeachingOccurred;
     private final Runnable renewWakeLock = new Runnable() {
         @Override public void run() {
             if (!active || destroyed) return;
@@ -97,7 +96,6 @@ public class TaskForegroundService extends Service {
         }
 
         active = true;
-        manualTakeoverTeachingOccurred = false;
         mainHandler.post(renewWakeLock);
         Runnable complete = () -> mainHandler.post(this::finishAfterTaskExecutionV466);
 
@@ -114,20 +112,9 @@ public class TaskForegroundService extends Service {
     private void finishAfterTaskExecutionV466() {
         if (destroyed || finishing) return;
 
-        // 人工接管后，TaskExecutor 会先结束自动执行线程，但真人教学仍可能
-        // 正在被动采样。此时不能立即 stopSelf()，否则真人经验窗口会被服务一起杀掉。
-        if (TaskExecutor.isHumanTeachingActiveV466()) {
-            manualTakeoverTeachingOccurred = true;
-            TaskStatusReceiver.writeLog(
-                    getApplicationContext(),
-                    "INFO",
-                    "真人经验",
-                    "自动任务线程已结束，保留前台服务等待真人教学窗口结束"
-            );
-            mainHandler.postDelayed(this::finishAfterTaskExecutionV466, 500L);
-            return;
-        }
-
+        // V4.50.2: no automatic 90-second teaching observer exists anymore.
+        // As soon as TaskExecutor finishes (including manual takeover), release
+        // the service so a new task request cannot be blocked as a duplicate.
         finishing = true;
         active = false;
         mainHandler.removeCallbacks(renewWakeLock);
@@ -135,15 +122,9 @@ public class TaskForegroundService extends Service {
                 getApplicationContext(),
                 "INFO",
                 "调度",
-                manualTakeoverTeachingOccurred
-                        ? "人工接管教学已结束，播放完成提示音后停止前台服务"
-                        : "任务执行器已结束且未触发人工接管，不播放提示音"
+                "任务执行器已结束，立即停止前台服务；不保留90秒真人教学窗口"
         );
-        if (manualTakeoverTeachingOccurred) {
-            playTaskCompletionSoundAndStopV472();
-        } else {
-            stopServiceAfterCompletionSoundV472();
-        }
+        stopServiceAfterCompletionSoundV472();
     }
 
     @Override
@@ -151,8 +132,8 @@ public class TaskForegroundService extends Service {
         destroyed = true;
         mainHandler.removeCallbacksAndMessages(null);
         if (active) TaskExecutor.requestStop("前台服务已销毁");
-        // requestStop() may enter the normal abort path; invalidate teaching after
-        // that path so service destruction can never restart the observer.
+        // Explicit gesture learning owns a separate service. This task service
+        // only stops its own physical monitor on destruction.
         TaskExecutor.stopHumanTeachingForServiceDestroyV466();
         active = false;
         try {
