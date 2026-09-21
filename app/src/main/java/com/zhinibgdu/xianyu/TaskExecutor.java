@@ -3729,6 +3729,18 @@ public final class TaskExecutor {
         return m.find() ? m.group() : "仍在浏览";
     }
 
+    private static int browseCountdownSecondsV484(String text) {
+        if (text == null) return -1;
+        Matcher m = Pattern.compile("滑动浏览\\s*(\\d+)\\s*(?:s|秒)?",
+                Pattern.CASE_INSENSITIVE).matcher(text);
+        if (!m.find()) return -1;
+        try {
+            return Integer.parseInt(m.group(1));
+        } catch (Throwable ignored) {
+            return -1;
+        }
+    }
+
     private static boolean isDeterministicInternalBrowseTaskV4432(String taskName) {
         String n = normalizeTaskOcrTextV483(taskName);
         return n.contains("去浏览福利好物")
@@ -4005,37 +4017,24 @@ public final class TaskExecutor {
         long started = SystemClock.elapsedRealtime();
 
         try {
-            // 15 秒内部浏览期间约每 2.5 秒滑动一次。
-            long nextBrowseSwipe = fixedDuration(2500L, 2300L, 2700L);
             long nextFgCheck = 0L;
             long systemTransitSince = 0L;
-            long nextBrowseCompletionProbe = 15000L;
             int browseCompletionMisses = 0;
 
             // Counted internal-browse tasks expose their own "滑动浏览Ns" countdown.
-            // Wall-clock time alone is not completion evidence: OCR/video showed that
-            // after our previous 8-20s waits the page still had 10-16s remaining.
+            // The countdown, not our wall-clock timer, is the source of truth.
             boolean welfareBrowse = isWelfareBrowseTaskV4433(taskName);
             boolean browseCountdownConfirmedComplete = !welfareBrowse;
 
-            // The page itself is the final authority. For the mall-coupon task,
-            // verify the destination once and switch to countdown-driven browsing
-            // whenever “滑动浏览Ns” is visible, regardless of title OCR spelling.
-            if (isMallCouponBrowseTaskV483(taskName)) {
-                if (!paceSleepV415(500L, 750L)) return false;
-                ScreenOcr.Snapshot firstBrowseProbe =
-                        captureOcrV45(suPath, "商城浏览页面确认");
-                String firstBrowseText = combinedTextV45(null, firstBrowseProbe);
-                if (containsBrowseCountdownV4433(firstBrowseText)) {
-                    welfareBrowse = true;
-                    isInternalBrowse = true;
-                    browseCountdownConfirmedComplete = false;
-                    diagnostic("[浏览倒计时V4.84] 已识别页面倒计时："
-                            + extractBrowseCountdownV4433(firstBrowseText));
-                }
-            }
+            // Counted pages need active motion. Start swiping early and more often;
+            // sparse 2.5s swipes were making a nominal 20s task take ~50s.
+            long browseSwipeIntervalMs = welfareBrowse ? 1350L : 2500L;
+            long nextBrowseSwipe = welfareBrowse ? 1100L : 2500L;
+            long nextBrowseCompletionProbe = welfareBrowse ? 14000L : 15000L;
 
-            long effectiveWaitMs = welfareBrowse ? Math.max(waitMs, 52000L) : waitMs;
+            // Safety guard only. Normal completion happens as soon as the page countdown
+            // reaches zero/disappears; do not cut off a task that has only 1-2s left.
+            long effectiveWaitMs = welfareBrowse ? Math.max(waitMs, 80000L) : waitMs;
 
             while (SystemClock.elapsedRealtime() - started < effectiveWaitMs) {
                 if (!paceSleepV415(170L, 290L)) return false;
@@ -4091,39 +4090,48 @@ public final class TaskExecutor {
                                     + elapsed + "ms"
                                 : "[执行] 内部浏览滑动，elapsed=" + elapsed + "ms");
                     }
-                    nextBrowseSwipe += 2500L;
+                    nextBrowseSwipe = elapsed + browseSwipeIntervalMs;
                 }
 
-                // For counted browse tasks, visible countdown always wins.
-                // Never treat a missing fish icon as completion while OCR still says
-                // "滑动浏览Ns". Require two consecutive countdown-missing probes.
+                // Visible countdown always wins. OCR itself is expensive, so probe
+                // sparsely while many seconds remain, then tighten near completion.
                 if (welfareBrowse && elapsed >= nextBrowseCompletionProbe) {
                     ScreenOcr.Snapshot browseProbe =
                             captureOcrV45(suPath, "浏览倒计时确认");
                     String browseText = combinedTextV45(null, browseProbe);
+                    int remaining = browseCountdownSecondsV484(browseText);
 
-                    if (containsBrowseCountdownV4433(browseText)) {
+                    if (remaining == 0) {
+                        browseCountdownConfirmedComplete = true;
+                        diagnostic("[浏览倒计时V4.84] ✅ 页面显示0s，浏览完成");
+                        break;
+                    } else if (remaining > 0) {
                         browseCompletionMisses = 0;
-                        diagnostic("[浏览倒计时V4.83] 仍未完成，继续滑动："
-                                + extractBrowseCountdownV4433(browseText));
+                        diagnostic("[浏览倒计时V4.84] 仍未完成，剩余="
+                                + remaining + "s，继续滑动");
+                        long probeGap = remaining > 8 ? 7000L
+                                : (remaining > 3 ? 4500L : 2500L);
+                        nextBrowseCompletionProbe =
+                                SystemClock.elapsedRealtime() - started + probeGap;
                     } else {
                         browseCompletionMisses++;
-                        diagnostic("[浏览倒计时V4.83] 本次未识别到倒计时，确认="
+                        diagnostic("[浏览倒计时V4.84] 本次未识别到倒计时，确认="
                                 + browseCompletionMisses + "/2");
                         if (browseCompletionMisses >= 2 && elapsed >= 15000L) {
                             browseCountdownConfirmedComplete = true;
-                            diagnostic("[浏览倒计时V4.83] ✅ 连续两次确认倒计时消失，浏览完成");
+                            diagnostic("[浏览倒计时V4.84] ✅ 连续两次确认倒计时消失，浏览完成");
                             break;
                         }
+                        nextBrowseCompletionProbe =
+                                SystemClock.elapsedRealtime() - started + 2200L;
                     }
-                    nextBrowseCompletionProbe = elapsed + 2500L;
                 }
             }
 
             if (userAborted) return false;
 
             if (welfareBrowse && !browseCountdownConfirmedComplete) {
-                diagnostic("[浏览倒计时V4.83] ❌ 保护时限内倒计时未确认结束，不把任务记为完成");
+                diagnostic("[浏览倒计时V4.84] ❌ 80秒保护时限内仍未确认结束，不把任务记为完成");
                 recoverToXianyuTaskPanelV47(suPath, "浏览倒计时超时恢复任务面板");
                 return false;
             }
