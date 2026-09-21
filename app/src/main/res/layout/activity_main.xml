@@ -41,7 +41,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="一键擦亮 · 本地任务 · 视频任务 · 跳转任务"
+                    android:text="闲鱼本地任务 · 视频任务 · 小游戏任务"
                     android:textColor="#7A8190"
                     android:textSize="13sp" />
 
@@ -492,10 +492,10 @@
                     android:paddingStart="14dp"
                     android:paddingEnd="14dp">
                     <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="跳转任务" android:textColor="#374151" android:textSize="15sp" android:textStyle="bold" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="小游戏任务" android:textColor="#374151" android:textSize="15sp" android:textStyle="bold" />
                         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:maxLines="1" android:text="支付宝、淘宝、农场、闪购等跨页面任务" android:textColor="#9CA3AF" android:textSize="10sp" />
                     </LinearLayout>
-                    <Switch android:id="@+id/switch_jump_task" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="跳转任务开关" />
+                    <Switch android:id="@+id/switch_game_task" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="小游戏任务开关" />
                 </LinearLayout>
             </LinearLayout>
 
