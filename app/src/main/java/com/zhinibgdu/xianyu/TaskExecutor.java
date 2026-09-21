@@ -2722,7 +2722,8 @@ public final class TaskExecutor {
         if (containsAny(name, "指定频道")) return 10;
         if (containsAny(name, "视频")) return 4;
         if (containsAny(name, "浏览")) return 3;
-        if (containsAny(name, "逛逛商城领超值优惠券", "商城", "好物")) return 2;
+        String normalized = normalizeTaskOcrTextV483(name);
+        if (containsAny(normalized, "逛逛商城领超值优惠券", "商城", "好物")) return 2;
         return 1;
     }
 
@@ -3709,8 +3710,10 @@ public final class TaskExecutor {
     }
 
     private static boolean isWelfareBrowseTaskV4433(String taskName) {
-        if (taskName == null) return false;
-        return taskName.replaceAll("\\s+", "").contains("去浏览福利好物");
+        String n = normalizeTaskOcrTextV483(taskName);
+        return n.contains("去浏览福利好物")
+                || n.contains("逛逛商城领超值优惠券")
+                || (n.contains("逛逛商城") && n.contains("优惠券"));
     }
 
     private static boolean containsBrowseCountdownV4433(String text) {
@@ -3727,10 +3730,10 @@ public final class TaskExecutor {
     }
 
     private static boolean isDeterministicInternalBrowseTaskV4432(String taskName) {
-        if (taskName == null) return false;
-        String n = taskName.replaceAll("\\s+", "");
+        String n = normalizeTaskOcrTextV483(taskName);
         return n.contains("去浏览福利好物")
-                || n.contains("逛逛商城领超值优惠券");
+                || n.contains("逛逛商城领超值优惠券")
+                || (n.contains("逛逛商城") && n.contains("优惠券"));
     }
 
     private static ScreenOcr.Snapshot freshTaskPanelOcrV415() {
@@ -4009,12 +4012,12 @@ public final class TaskExecutor {
             long nextBrowseCompletionProbe = 15000L;
             int browseCompletionMisses = 0;
 
-            // 闲鱼“滑动浏览15s”页面实际存在一个独立倒计时。
-            // 15 秒是最低要求，不等于我们的自动化可以在 15 秒整立即退出。
-            // 日志已证明 15 秒结束时页面仍显示“滑动浏览8s/7s”，所以继续等待
-            // 直到倒计时消失；最多给 45 秒保护上限，避免页面异常时无限等待。
+            // Counted internal-browse tasks expose their own "滑动浏览Ns" countdown.
+            // Wall-clock time alone is not completion evidence: OCR/video showed that
+            // after our previous 8-20s waits the page still had 10-16s remaining.
             boolean welfareBrowse = isWelfareBrowseTaskV4433(taskName);
-            long effectiveWaitMs = welfareBrowse ? Math.max(waitMs, 45000L) : waitMs;
+            boolean browseCountdownConfirmedComplete = !welfareBrowse;
+            long effectiveWaitMs = welfareBrowse ? Math.max(waitMs, 52000L) : waitMs;
 
             while (SystemClock.elapsedRealtime() - started < effectiveWaitMs) {
                 if (!paceSleepV415(170L, 290L)) return false;
@@ -4048,7 +4051,7 @@ public final class TaskExecutor {
                 }
 
                 if (isInternalBrowse && elapsed >= nextBrowseSwipe
-                        && (!welfareBrowse || elapsed < 42000L)) {
+                        && (!welfareBrowse || elapsed < effectiveWaitMs - 2500L)) {
                     String fg = getFg(suPath, false);
                     if (MODULE_PACKAGE.equals(fg)) {
                         markUserAbortV48("浏览任务期间用户接管");
@@ -4073,44 +4076,39 @@ public final class TaskExecutor {
                     nextBrowseSwipe += 2500L;
                 }
 
-                // 15 秒后开始确认闲鱼自己的“滑动浏览N秒”倒计时。
-                // 一旦确认倒计时已经消失，立即返回；只有 OCR 偶发漏识别时才需要
-                // 第二次确认。这样完成后不会额外等待几十秒。
+                // For counted browse tasks, visible countdown always wins.
+                // Never treat a missing fish icon as completion while OCR still says
+                // "滑动浏览Ns". Require two consecutive countdown-missing probes.
                 if (welfareBrowse && elapsed >= nextBrowseCompletionProbe) {
                     ScreenOcr.Snapshot browseProbe =
-                            captureOcrV45(suPath, "福利浏览倒计时确认");
+                            captureOcrV45(suPath, "浏览倒计时确认");
                     String browseText = combinedTextV45(null, browseProbe);
-
-                    // V4.43.7: 完成态以右下角“小黄鱼”任务浮层消失为准。
-                    // OCR 可能把商品正文中的“滑动浏览9s”误识别为倒计时，即使真正
-                    // 的任务浮层已经消失；此时继续等待会把已完成任务卡死到保护上限。
-                    if (elapsed >= 15000L && !browseProbe.welfareFishVisible) {
-                        diagnostic("[福利浏览V4.43.7] ✅ 小黄鱼浮层已消失，确认浏览完成；忽略残留OCR倒计时："
-                                + extractBrowseCountdownV4433(browseText));
-                        break;
-                    }
 
                     if (containsBrowseCountdownV4433(browseText)) {
                         browseCompletionMisses = 0;
-                        diagnostic("[福利浏览V4.50] 任务倒计时仍存在，继续滑动："
-                                + extractBrowseCountdownV4433(browseText)
-                                + " / 小黄鱼=" + (browseProbe.welfareFishVisible ? "显示" : "未显示"));
+                        diagnostic("[浏览倒计时V4.83] 仍未完成，继续滑动："
+                                + extractBrowseCountdownV4433(browseText));
                     } else {
                         browseCompletionMisses++;
-                        diagnostic("[福利浏览V4.43.7] 未识别到倒计时，确认次数="
-                                + browseCompletionMisses + "/2"
-                                + " / 小黄鱼=" + (browseProbe.welfareFishVisible ? "显示" : "未显示"));
-                        // 15 秒后倒计时消失 + 连续两次确认即可返回。
+                        diagnostic("[浏览倒计时V4.83] 本次未识别到倒计时，确认="
+                                + browseCompletionMisses + "/2");
                         if (browseCompletionMisses >= 2 && elapsed >= 15000L) {
-                            diagnostic("[福利浏览V4.43.7] ✅ 已确认浏览完成，立即进入返回任务面板");
+                            browseCountdownConfirmedComplete = true;
+                            diagnostic("[浏览倒计时V4.83] ✅ 连续两次确认倒计时消失，浏览完成");
                             break;
                         }
                     }
-                    nextBrowseCompletionProbe += 1000L;
+                    nextBrowseCompletionProbe = elapsed + 2500L;
                 }
             }
 
             if (userAborted) return false;
+
+            if (welfareBrowse && !browseCountdownConfirmedComplete) {
+                diagnostic("[浏览倒计时V4.83] ❌ 保护时限内倒计时未确认结束，不把任务记为完成");
+                recoverToXianyuTaskPanelV47(suPath, "浏览倒计时超时恢复任务面板");
+                return false;
+            }
 
             String fg = getFg(suPath, false);
             diagnostic("[执行] 前台=" + printableFg(fg));
@@ -5832,8 +5830,9 @@ public final class TaskExecutor {
         long explicit = explicitSecondsRequirementV415(taskName);
         if (explicit > 0L) return Math.min(45000L, explicit + 900L);
         if (isSearch) return 5200L;
-        if (taskName != null
-                && taskName.replaceAll("\\s+", "").contains("逛逛商城领超值优惠券")) return 21000L;
+        String normalizedTask = normalizeTaskOcrTextV483(taskName);
+        if (normalizedTask.contains("逛逛商城领超值优惠券")
+                || (normalizedTask.contains("逛逛商城") && normalizedTask.contains("优惠券"))) return 21000L;
         // “去浏览福利好物”需要完整浏览约 15 秒；旧版 8200ms 只够滑动两次。
         if (isInternalBrowse && taskName != null
                 && taskName.replaceAll("\s+", "").contains("去浏览福利好物")) return 15000L;
@@ -5855,8 +5854,9 @@ public final class TaskExecutor {
     ) {
         long explicit = explicitSecondsRequirementV415(taskName);
         if (explicit > 0L) return Math.min(45000L, explicit + 500L);
-        if (taskName != null
-                && taskName.replaceAll("\\s+", "").contains("逛逛商城领超值优惠券")) return 20500L;
+        String normalizedTask = normalizeTaskOcrTextV483(taskName);
+        if (normalizedTask.contains("逛逛商城领超值优惠券")
+                || (normalizedTask.contains("逛逛商城") && normalizedTask.contains("优惠券"))) return 20500L;
         if (isInternalBrowse && taskName != null
                 && taskName.replaceAll("\s+", "").contains("去浏览福利好物")) return 15000L;
         if (isInternalBrowse) return 6200L;
@@ -7812,6 +7812,15 @@ public final class TaskExecutor {
                 .replace('\n', ' ')
                 .replace('\r', ' ')
                 .trim();
+    }
+
+    private static String normalizeTaskOcrTextV483(String value) {
+        if (value == null) return "";
+        return value.replaceAll("\\s+", "")
+                .replace("領", "领")
+                .replace("獎", "奖")
+                .replace("還", "还")
+                .replace("點", "点");
     }
 
     private static String trimForLog(
