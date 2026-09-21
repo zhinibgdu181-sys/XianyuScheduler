@@ -162,6 +162,10 @@ public final class TaskExecutor {
     // not stop itself on devices that echo synthetic input to getevent.
     private static volatile long syntheticInputIgnoreUntilV411 = 0L;
     private static volatile long lastSyntheticInputAtV411 = 0L;
+    // V4.50.5: while a learned sendevent path is actively being emitted, getevent
+    // echoes are synthetic by definition. This closes the race where a long root
+    // command outlives the timestamp-only ignore window and aborts its own task.
+    private static volatile boolean syntheticGestureActiveV4505 = false;
 
     // V4.11 OCR cache. The cache is deliberately short lived and is invalidated
     // after any UI-affecting root command.
@@ -700,6 +704,9 @@ public final class TaskExecutor {
             if (!sleepAbortableV48(500L)) return false;
             invalidateOcrCacheV411();
             page = probePageV411(suPath, "启动后先确认当前页面");
+            if (page != null && recoverKnownMyListingsBeforeFastNavV4505(suPath, page)) {
+                page = probePageV411(suPath, "极速导航V4.50.5/退出我的发布后");
+            }
             int deepRecovery = 0;
             while (!userAborted
                     && page != null
@@ -1014,6 +1021,15 @@ public final class TaskExecutor {
             return;
         }
 
+        if (isAlreadyPolishedListingsV4505(listings)) {
+            listingPolishSucceededV448 = true;
+            diagnostic("[一键擦亮V4.50.5] ✅ 检测到‘有计划投放中’，今日已擦亮，不再重复点击");
+            sendStatus("一键擦亮", "SUCCESS", "今日已有超强擦亮计划，不重复点击");
+            preferredRightBackOnceV410(suPath, "已擦亮返回我的");
+            waitMinePageV45(suPath, 4200L);
+            return;
+        }
+
         ScreenOcr.Item polish = listings.findBest("一键擦亮");
         boolean polished = false;
         if (polish != null) {
@@ -1088,6 +1104,14 @@ public final class TaskExecutor {
         return ScreenOcr.Snapshot.empty();
     }
 
+    private static boolean isAlreadyPolishedListingsV4505(ScreenOcr.Snapshot snapshot) {
+        if (snapshot == null || snapshot.isEmpty()) return false;
+        String text = snapshot.fullText == null ? "" : snapshot.fullText.replaceAll("\\\\s+", "");
+        return text.contains("有计划投放中")
+                || text.contains("今日有超强擦亮计划投放中")
+                || text.contains("超强擦亮计划投放中");
+    }
+
     private static boolean isMyListingsPageV448(ScreenOcr.Snapshot snapshot) {
         if (snapshot == null || snapshot.isEmpty()) return false;
         String text = snapshot.fullText == null ? "" : snapshot.fullText;
@@ -1100,6 +1124,29 @@ public final class TaskExecutor {
         if (text.contains("已下架")) score++;
         if (text.contains("一键擦亮")) score += 2;
         return score >= 2;
+    }
+
+    private static boolean looksLikeMyListingsSurfaceV4505(ScreenOcr.Snapshot snapshot) {
+        if (snapshot == null || snapshot.isEmpty()) return false;
+        String text = snapshot.fullText == null ? "" : snapshot.fullText;
+        int score = 0;
+        if (text.contains("今日数据")) score++;
+        if (text.contains("宝贝曝光")) score++;
+        if (text.contains("在卖")) score++;
+        if (text.contains("草稿")) score++;
+        if (text.contains("已下架")) score++;
+        if (text.contains("加曝光")) score++;
+        if (text.contains("编辑")) score++;
+        if (text.contains("超强擦亮")) score++;
+        if (text.contains("有计划投放中")) score += 2;
+        return score >= 4;
+    }
+
+    private static boolean recoverKnownMyListingsBeforeFastNavV4505(String suPath, PageProbeV411 page) {
+        if (page == null || !looksLikeMyListingsSurfaceV4505(page.ocr)) return false;
+        diagnostic("[极速导航V4.50.5] 已识别‘我的发布/宝贝管理’旧页面，执行一次受控右侧返回");
+        if (!preferredRightBackOnceV410(suPath, "极速导航-退出我的发布旧页面")) return false;
+        return sleepAbortableV48(420L);
     }
 
     private static boolean looksLikeOpeningAdV450(ScreenOcr.Snapshot ocr) {
@@ -5813,8 +5860,9 @@ public final class TaskExecutor {
                         if (now < monitorArmedAtV453) continue;
                         if (lastGestureEndAt > 0L && now - lastGestureEndAt < 120L) continue;
 
-                        if (now <= syntheticInputIgnoreUntilV411
-                                && now - lastSyntheticInputAtV411 <= 1500L) {
+                        if (syntheticGestureActiveV4505
+                                || (now <= syntheticInputIgnoreUntilV411
+                                && now - lastSyntheticInputAtV411 <= 2200L)) {
                             diagnostic("[学习真人V4.50] 忽略程序合成触摸尾事件");
                             continue;
                         }
@@ -7223,9 +7271,17 @@ public final class TaskExecutor {
                 now + Math.max(1000L, durationMs + 850L);
         invalidateOcrCacheV411();
 
-        diagnostic("[学习真人V4.50] 注入真人轨迹 " + kind
+        diagnostic("[学习真人V4.50.5] 注入真人轨迹 " + kind
                 + " points=" + points.size() + " duration=" + durationMs + "ms");
-        return rootRaw(suPath, cmd.toString());
+        syntheticGestureActiveV4505 = true;
+        try {
+            return rootRaw(suPath, cmd.toString());
+        } finally {
+            long finishedAt = SystemClock.elapsedRealtime();
+            lastSyntheticInputAtV411 = finishedAt;
+            syntheticInputIgnoreUntilV411 = finishedAt + 1400L;
+            syntheticGestureActiveV4505 = false;
+        }
     }
 
     private static int pixelToRawV450(int pixel, int screenSize, int rawMax) {
