@@ -12,7 +12,10 @@ public enum TaskCategory {
     /** Null means unknown, external, or unsupported. */
     static TaskCategory classify(String title) {
         if (title == null) return null;
-        String n = title.replaceAll("\\s+", "").replace("還想", "还想").replace("點點", "点点").replace("妈蚁", "蚂蚁").replace("访间", "访问")
+        String n = title.replaceAll("\\s+", "")
+                .replace("還想", "还想").replace("點點", "点点")
+                .replace("領", "领").replace("獎", "奖")
+                .replace("妈蚁", "蚂蚁").replace("访间", "访问")
                 .replace("壹", "1").replace("１", "1").replace("I关", "1关").replace("l关", "1关");
         // 先排除明确的外部/跨 App 任务，再判断视频和小游戏。
         // 这些任务虽然显示在闲鱼任务面板，但点击后会离开闲鱼，不属于本地任务。
