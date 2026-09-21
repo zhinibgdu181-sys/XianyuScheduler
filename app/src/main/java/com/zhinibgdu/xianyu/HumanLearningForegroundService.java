@@ -57,7 +57,7 @@ public class HumanLearningForegroundService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (TaskExecutor.isRunning()) {
             TaskStatusReceiver.writeLog(
-                    this, "WARN", "学习真人", "自动任务正在运行，不能同时学习真人操作");
+                    this, "WARN", "手势细节学习", "自动任务正在运行，不能同时采集手势细节");
             stopSelf(startId);
             return START_NOT_STICKY;
         }
@@ -69,7 +69,7 @@ public class HumanLearningForegroundService extends Service {
 
         if (!started) {
             TaskStatusReceiver.writeLog(
-                    this, "FAILED", "学习真人", "学习模式启动失败，请检查 ROOT 权限");
+                    this, "FAILED", "手势细节学习", "手势细节学习启动失败，请检查 ROOT 权限");
             stopSelf(startId);
             return START_NOT_STICKY;
         }
@@ -95,7 +95,7 @@ public class HumanLearningForegroundService extends Service {
         if (manager == null) return;
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "真人操作学习",
+                "手势细节学习",
                 NotificationManager.IMPORTANCE_LOW
         );
         channel.setDescription("仅学习闲鱼内单次点击/滑动动作风格，不学习任务流程");
@@ -117,7 +117,7 @@ public class HumanLearningForegroundService extends Service {
 
         return builder
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
-                .setContentTitle("学习真人")
+                .setContentTitle("手势细节学习")
                 .setContentText("仅学习点击抖动、按压和滑动距离/弧度/速度，不学习流程")
                 .setOngoing(true)
                 .setContentIntent(contentIntent)
